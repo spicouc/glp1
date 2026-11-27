@@ -1,0 +1,21 @@
+# Stack E2E: còpia AÏLLADA de l'entorn per a les proves de navegador.
+#
+#   docker compose -p glp1e2e -f docker-compose.yml -f docker-compose.e2e.yml up -d --build
+#   GLP1_PORT=8098 docker compose -p glp1e2e ...
+#
+# - Contenidors amb un altre nom (el `container_name` del fitxer principal
+#   col·lidiria amb el de producció).
+# - Port del web: es passa per variable d'entorn (`GLP1_PORT=8098`) perquè el
+#   fitxer principal ja el té parametritzat.
+# - Volum de dades: els volums amb nom es prefixen amb el projecte (`glp1e2e_`),
+#   així que la base de dades E2E és ZERO amb la de producció (8099).
+#
+# Resultat: les proves es corren contra http://127.0.0.1:8098/ i la base real
+# (pacients, catàleg i usuaris del 8099) queda intacta.
+
+services:
+  glp1:
+    container_name: glp1-e2e
+
+  glp1-api:
+    container_name: glp1-api-e2e

@@ -1,0 +1,19 @@
+{
+  "name": "glp1",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Registre i seguiment longitudinal de tractaments GLP-1/GIP (local-first, sense build).",
+  "scripts": {
+    "test": "node --test",
+    "serve": "bash serve.sh",
+    "e2e": "node e2e/runner.mjs",
+    "e2e:up": "GLP1_PORT=${GLP1_E2E_PORT:-8098} docker compose -p glp1e2e -f docker-compose.yml -f docker-compose.e2e.yml up -d --build",
+    "e2e:down": "docker compose -p glp1e2e -f docker-compose.yml -f docker-compose.e2e.yml down",
+    "e2e:restore": "node e2e/runner.mjs --restore",
+    "test:api": "cd api && python3 -m unittest test_server"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.65.1"
+  }
+}

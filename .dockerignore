@@ -1,0 +1,12 @@
+.git
+.gitignore
+node_modules
+package.json
+package-lock.json
+README.md
+server.log
+*.log
+test
+e2e
+docker-compose.yml
+.dockerignore

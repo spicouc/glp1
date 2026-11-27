@@ -1,0 +1,63 @@
+services:
+  glp1:
+    build:
+      context: .
+    image: glp1:latest
+    container_name: glp1
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 15s
+    ports:
+      - "${GLP1_PORT:-8099}:80"
+    depends_on:
+      glp1-api:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/index.html"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # API de dades: usuaris, tokens, pacients (SQLite) i catàleg de fàrmacs.
+  # No publica cap port: només accessible via nginx (/api/).
+  glp1-api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    image: glp1-api:latest
+    container_name: glp1-api
+    restart: unless-stopped
+    init: true
+    environment:
+      GLP1_DATA: /data
+      GLP1_API_PORT: "8001"
+      GLP1_ADMIN_USER: ${GLP1_ADMIN_USER:-admin}
+      # ⚠ Canvia-la! (es desa a l'arxiu .env de glp1/)
+      GLP1_ADMIN_PASSWORD: ${GLP1_ADMIN_PASSWORD:-admin1234-change-me}
+      GLP1_TOKEN_TTL_DAYS: ${GLP1_TOKEN_TTL_DAYS:-30}
+    volumes:
+      - glp1_data:/data
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/api/health', timeout=4).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 8s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  glp1_data:
