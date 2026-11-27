@@ -77,7 +77,7 @@ capa `js/data/repository.js` ja està aïllada específicament per a això.
 npm run test:api       # tests de l'API (Python): auth, merge, rols, tokens, catàleg, tombes,
                        #   duplicats, saldos, auditoria, purga, enllaç amb discrepància (28)
 npm test               # tests unitaris: model, càlcul, pla, plomes, sync, catàleg,
-                       #   migració v3, estats, fases, inventari (101)
+                       #   migració v3, estats, fases, inventari (102)
 npm run e2e            # proves de navegador: arrenca la PILA AÏLLADA (:8098)
                        #   smoke.mjs   flux complet per la UI
                        #   pens.mjs    plomes: capacitat en clics, esborrar/restaurar,
@@ -98,6 +98,11 @@ aïllada** de l'entorn (`docker-compose.e2e.yml`): altres contenidors
 (`glp1e2e_glp1_data`), així que pacients, catàleg i usuaris del 8099 queden
 intactes. Les suites importen `BASE` d'`e2e/helpers.mjs` (font única: 8098 per
 defecte, o `BASE_URL` si se n'especifica un altre).
+
+Cada suite **torna codi d'error si té problemes** (`process.exit(problems.length)`),
+així que el runner no pot declarar «8 suites verdes» tenint-ne de fallides:
+abans `inventory.mjs` i `planestats.mjs` acabaven sense codi de sortida i els
+seus errors passaven desapercebuts.
 
 `npm run e2e` passa per un **runner** (`e2e/runner.mjs`): arrenca la pila E2E,
 fa un *snapshot* del servidor (`/tmp/opencode/glp1-e2e-server-snapshot.json`:
@@ -221,6 +226,13 @@ Navegador ── https://glp1.cala-adsum.top ──► nginx (glp1)
   del servidor. Clicant l'indicador es pot forçar.
 - **Merge per `updatedAt`**: guanya sempre la versió més recent de cada
   pacient; cap dispositiu perd dades si editen dos alhora.
+- **Mai marxa enrere**: la resposta de la pujada **també es fusiona** per
+  `updatedAt` (abans s'aplicava a cega: una pujada enviada just abans d'una
+  edició recent tornava amb l'estat d'abans i l'esborrava tant local com al
+  servidor — era l'origen d'errors intermitents de les proves E2E). I si hi ha
+  una sincronització en marxa quan en demanem una de nova, es torna a córrer
+  en acabar perquè els canvis d'aquest interlli pugin sense esperar l'acció
+  següent.
 - **Offline**: si el servidor no respon, es treballa amb la còpia local i
   l'indicador diu *Sense servidor · còpia local*; en recuperar-se, es fusiona.
 - **Sense sessió no es carrega cap dada** (pantalla d'entrada).

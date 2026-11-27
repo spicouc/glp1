@@ -46,6 +46,26 @@ function ensureStack() {
   }
 }
 
+/**
+ * Espera que el web respongui abans d'obrir cap navegador: just després de
+ * reiniciar o reconstruir contenidors, la xarxa de Docker pot canviar un
+ * instant i la primera càrrega de pàgina rep `net::ERR_NETWORK_CHANGED`
+ * (esquivat amb un sondeig previ).
+ */
+async function waitForServer(timeoutMs = 20000) {
+  const base = process.env.BASE_URL || `http://127.0.0.1:${E2E_PORT}/`;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const res = await fetch(base, { method: 'HEAD' });
+      if (res.status < 500) { console.log(`✓ Servidor E2E respon (${base})`); return true; }
+    } catch { /* encara arrencant o xarxa en transició */ }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  console.warn(`⚠ El servidor E2E no acaba de respondre a ${base} (${timeoutMs} ms)`);
+  return false;
+}
+
 async function restoreOnly() {
   const res = await restoreServer();
   if (!res.ok) {
@@ -59,6 +79,7 @@ if (process.argv.includes('--restore')) {
   restoreOnly();
 } else {
   ensureStack();
+  await waitForServer();
   const failures = [];
   let snapshot;
   try {

@@ -80,17 +80,31 @@ export async function pullFromServer() {
 export async function pushToServer() {
   const local = repo.list({ includeDeleted: true });
   const res = await api.putPatients(local);
-  // el servidor respon amb l'estat fusionat (pot portar canvis d'altres dispositius)
-  if (Array.isArray(res.patients)) repo.replaceAll(res.patients);
+  // La resposta és l'estat del servidor, que pot ser ANTIC: una pujada enviada
+  // abans d'un canvi local recent (editant una fase, omesos, etc.) arriba amb
+  // les dades d'abans. Aplicar-la a cega FEIA MARXA ENRERE l'edició local.
+  // Es fusiona per `updatedAt` (mateixa regla que el pull) i sobre el que hi
+  // hagi ARA, perquè un canvi fet durant la pujada tampoc es perdi.
+  if (Array.isArray(res.patients)) {
+    const now = repo.list({ includeDeleted: true });
+    const merged = mergePatientLists(now, res.patients);
+    repo.replaceAll(merged.merged);
+  }
   return res;
 }
+
+/** Hi ha una sincronització nova demanada mentre n'hi havia una de busy. */
+let rerun = false;
 
 /**
  * Sincronització completa: baixa, fusiona i puja el que falti.
  * Idempotent; es pot cridar després de cada desat.
  */
 export async function fullSync({ silent = false } = {}) {
-  if (sync.busy) return sync;
+  // Ja n'hi ha una en marxa: no es talla, però queda marcada per tornar a
+  // córrer en acabar (si no, els canvis fets durant la pujada esperarien a
+  // l'acció següent de l'usuari per pujar-se).
+  if (sync.busy) { rerun = true; return sync; }
   if (!api.getToken()) {
     sync.status = 'no-session';
     if (!silent) emit();
@@ -115,6 +129,10 @@ export async function fullSync({ silent = false } = {}) {
   } finally {
     sync.busy = false;
     if (!silent) emit();
+    if (rerun) {
+      rerun = false;
+      fullSync({ silent: true }).catch(() => {});
+    }
   }
   return sync;
 }

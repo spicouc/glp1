@@ -2,7 +2,10 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mergePatientLists, stamp, syncLabel, sync } from '../js/data/sync.js';
+import { mergePatientLists, stamp, syncLabel, sync, pushToServer } from '../js/data/sync.js';
+import { repo } from '../js/data/localRepository.js';
+import { api } from '../js/data/api.js';
+import { createPatient } from '../js/core/model.js';
 import { drugList, getDrug, setDrugCatalog, serializeDrug, resolveConversion, CATALOG_VERSION } from '../js/core/drugs.js';
 import { createInitialPen } from '../js/core/model.js';
 
@@ -60,6 +63,42 @@ test('les tombes (pacients esborrats) es propaguen en els dos sentits', () => {
   const res2 = mergePatientLists([tombaNova], [tomba]);
   assert.equal(res2.merged[0].deletedAt, tombaNova.deletedAt);
   assert.ok(res2.localNewer.includes('d'), 'cal pujar la tomba');
+});
+
+test('la resposta d\'una pujada antiga NO reverteix un canvi local recent', async () => {
+  // Escrit real (bug E2E intermitent): mentre anava una pujada, l'usuari va
+  // editar una fase. La resposta del servidor tornava amb l'estat d'ABANS de
+  // l'edició i `replaceAll` l'aplicava a cega → l'edició desapareixia tant
+  // local com al servidor. Ara la resposta es fusiona per `updatedAt` (mateixa
+  // regla que el pull): qui sigui més recent guanya.
+  const mem = new Map();
+  globalThis.window = {
+    localStorage: {
+      getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+      setItem: (k, v) => mem.set(k, v),
+      removeItem: (k) => mem.delete(k),
+    },
+  };
+  const originalPut = api.putPatients;
+  try {
+    repo.save(createPatient({ code: 'AMB-LA-EDICIO' })); // updatedAt = ara
+
+    // el servidor respon amb la còpia pujada ABANS de l'edició
+    const stale = repo.list()[0];
+    api.putPatients = async () => ({
+      patients: [{ ...stale, code: 'ABANS-DE-LA-EDICIO', updatedAt: '2000-01-01T00:00:00.000Z' }],
+      created: 0, updated: 1, kept: 0, duplicates: 0,
+    });
+
+    await pushToServer();
+
+    const after = repo.list()[0];
+    assert.ok(after, 'el pacient continua local');
+    assert.equal(after.code, 'AMB-LA-EDICIO', 'el canvi local més recent es conserva');
+  } finally {
+    api.putPatients = originalPut;
+    delete globalThis.window;
+  }
 });
 
 test('stamp: usa updatedAt i, si no n\'hi ha, createdAt', () => {

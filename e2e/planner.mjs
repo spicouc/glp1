@@ -137,6 +137,35 @@ try {
   if (!/180/.test(coverage)) problems.push('No mostra el saldo després del pla (180)');
   await shot('21-pla-generat');
 
+  // --- #4: editar el planner NO ha de moure la pàgina ni perdre el cursor --
+  // A cada tecla de l'interval (o de la dosi) es re-renderitza la vista
+  // sencera: abans es perdia el focus i la pàgina saltava a dalt de tot —
+  // «et repagina tota l'estona».
+  await page.evaluate(() => window.scrollTo(0, 380));
+  const intervalField = planner.locator('input[aria-label="Cada quants dies"]');
+  await intervalField.click();
+  const yBefore = await page.evaluate(() => window.scrollY);
+  await page.keyboard.type('8'); // 7 → 78 (un re-render per tecla)
+  const focusAfterTyping = await page.evaluate(
+    () => document.activeElement && document.activeElement.getAttribute('aria-label'));
+  const yAfterTyping = await page.evaluate(() => window.scrollY);
+  if (focusAfterTyping !== 'Cada quants dies') {
+    problems.push('En escriure s\'ha perdut el focus: ' + (focusAfterTyping || '(cap)'));
+  }
+  if (Math.abs(yAfterTyping - yBefore) > 4) {
+    problems.push(`La pàgina ha saltat en escriure: ${yBefore} → ${yAfterTyping}`);
+  } else {
+    log(`✓ escriure al planner manté el cursor i la posició (scroll ${yBefore} → ${yAfterTyping})`);
+  }
+  await intervalField.fill('7'); // es torna a posar l'interval original
+  const focusAfterFill = await page.evaluate(
+    () => document.activeElement && document.activeElement.getAttribute('aria-label'));
+  if (focusAfterFill !== 'Cada quants dies') {
+    problems.push('S\'ha perdut el focus en re-emplenar l\'interval: ' + (focusAfterFill || '(cap)'));
+  } else {
+    log('✓ el focus es conserva també en re-emplenar el camp');
+  }
+
   // --- mes següent: les dates de desembre hi són -----------------------
   await page.getByRole('button', { name: 'Mes següent' }).click();
   await page.waitForTimeout(300);

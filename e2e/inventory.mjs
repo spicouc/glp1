@@ -143,8 +143,15 @@ try {
   await page.waitForTimeout(300);
 
   const unvalidated = await text('.records .record');
-  if (!/NO VALIDAT/.test(unvalidated)) problems.push('La dada manual no es marca com a no validada: ' + unvalidated.slice(0, 200));
-  else log('✓ entrada de salut marcada com a NO VALIDAT');
+  if (!/NO VALIDAT/.test(unvalidated)) {
+    // Diagnòstic: si la llista és buida, el formulari no va arribar a desar.
+    const dlgOpen = await page.locator('.dialog').count();
+    const dlgTxt = dlgOpen
+      ? (await page.locator('.dialog').first().innerText().catch(() => '')).replace(/\n/g, ' ')
+      : '(el diàleg ja s\'ha tancat)';
+    problems.push('La dada manual no es marca com a no validada: ' + unvalidated.slice(0, 200)
+      + ' | diàleg: ' + dlgTxt.slice(0, 220));
+  } else log('✓ entrada de salut marcada com a NO VALIDAT');
 
   await page.locator('.records .record').first().getByRole('button', { name: 'Edita' }).click();
   await page.waitForSelector('.dialog input[name="validated"]', { timeout: 5000 });
@@ -171,3 +178,4 @@ await browser.close();
 console.log('\n=== PROBLEMES ===');
 if (problems.length) problems.forEach((p) => console.log('•', p));
 else console.log('cap');
+process.exit(problems.length ? 1 : 0);

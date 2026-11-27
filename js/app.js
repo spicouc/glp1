@@ -66,26 +66,134 @@ function editingInProgress() {
   return Boolean(active.closest('form'));
 }
 
+/**
+ * Identitat d'un element: serveix per assegurar que, en restaurar el focus o
+ * un scroll, estem davant del MATEIX camp i no d'un altre de la mateixa ruta.
+ */
+function identityOf(node) {
+  return [
+    node.tagName,
+    node.getAttribute('name') || '',
+    node.getAttribute('aria-label') || '',
+    node.getAttribute('type') || '',
+    node.className || '',
+  ].join('|');
+}
+
+/** Ruta de l'element dins de l'arrel (estable entre dues renderitzacions). */
+function elementPath(node, scope) {
+  const parts = [];
+  let cur = node;
+  while (cur && cur !== scope) {
+    const parent = cur.parentElement;
+    const same = parent ? [...parent.children].filter((c) => c.tagName === cur.tagName) : [];
+    parts.unshift(`${cur.tagName.toLowerCase()}:${same.indexOf(cur)}`);
+    cur = parent;
+  }
+  return parts.join('/');
+}
+
+function findByPath(path, scope) {
+  let cur = scope;
+  for (const part of path.split('/')) {
+    if (!cur) return null;
+    const sep = part.lastIndexOf(':');
+    const same = [...cur.children]
+      .filter((c) => c.tagName && c.tagName.toLowerCase() === part.slice(0, sep));
+    cur = same[Number(part.slice(sep + 1))];
+  }
+  return cur || null;
+}
+
+/**
+ * On érem abans de substituir tota la vista: scroll de la pàgina, scroll dels
+ * contenidors interns (barra d'eines, llistes) i el camp enfocat amb el cursor.
+ * Sense això, editar el pla (dosi, interval, data…) re-renderitzava a cada
+ * tecla: es perdia el focus, el cursor tornava a l'inici i la pàgina saltava a
+ * dalt de tot —«et repagina tota l'estona».
+ */
+function captureView(scope) {
+  const active = document.activeElement;
+  const focus = active && scope.contains(active)
+    ? {
+        path: elementPath(active, scope),
+        identity: identityOf(active),
+        start: typeof active.selectionStart === 'number' ? active.selectionStart : null,
+        end: typeof active.selectionEnd === 'number' ? active.selectionEnd : null,
+      }
+    : null;
+
+  const scrolls = [];
+  for (const node of scope.querySelectorAll('*')) {
+    if (node.scrollLeft || node.scrollTop) {
+      scrolls.push({ path: elementPath(node, scope), identity: identityOf(node), left: node.scrollLeft, top: node.scrollTop });
+      if (scrolls.length >= 40) break;
+    }
+  }
+  return { focus, scrolls, pageY: window.scrollY };
+}
+
+/** Torna a posar scroll, focus i cursor tal com estaven (si encara hi són). */
+function restoreView(scope, keep) {
+  if (!keep) return;
+  window.scrollTo(0, keep.pageY);
+
+  for (const s of keep.scrolls) {
+    const node = findByPath(s.path, scope);
+    if (node && identityOf(node) === s.identity) {
+      node.scrollLeft = s.left;
+      node.scrollTop = s.top;
+    }
+  }
+
+  if (keep.focus) {
+    const node = findByPath(keep.focus.path, scope);
+    if (node && identityOf(node) === keep.focus.identity) {
+      node.focus({ preventScroll: true });
+      if (keep.focus.start != null) {
+        try { node.setSelectionRange(keep.focus.start, keep.focus.end); } catch { /* camps numèrics */ }
+      }
+      window.scrollTo(0, keep.pageY); // el focus pot haver mogut la pàgina
+    }
+  }
+}
+
+/** Ruta actual; canvia quan l'usuari navega (aleshores sí que es va a dalt). */
+let lastRouteKey = null;
+const routeKeyOf = (route) => `${route.name}|${JSON.stringify(route.params || {})}`;
+
 function render(reason = 'state') {
   const el = root();
   if (!el) return;
+  const route = state.route;
+  const routeKey = routeKeyOf(route);
+  const routeChanged = routeKey !== lastRouteKey;
+
   // Un refresh en segon pla no pot esborrar el que s'està escrivint: la
   // re-renderització substitueix tota la vista i els camps tornarien als
   // valors per defecte (es perdia, per exemple, l'edició d'una fase). Es
   // refrescarà amb el següent canvi real.
-  if (BACKGROUND_REASONS.has(reason) && editingInProgress()) return;
+  if (!routeChanged && BACKGROUND_REASONS.has(reason) && editingInProgress()) return;
+
   try {
-    const route = state.route;
     const view = route.name === 'admin'
       ? renderAdmin()
       : route.name === 'patient'
         ? renderPatient(route.params)
         : renderPatients();
 
+    // On érem abans de substituir-ho tot (només si continuem a la mateixa ruta)
+    const keep = routeChanged ? null : captureView(el);
+
     clear(el);
     el.appendChild(view);
     document.title = `${route.name === 'patient' ? route.params.id : route.name === 'admin' ? t('admin.title') : t('nav.patients')} · ${t('app.title')}`;
-    if (route.name === 'patient') window.scrollTo(0, 0);
+    if (routeChanged) {
+      lastRouteKey = routeKey;
+      if (route.name === 'patient') window.scrollTo(0, 0);
+    } else {
+      restoreView(el, keep);
+    }
   } catch (err) {
     console.error(err);
     clear(el).appendChild(
@@ -105,6 +213,7 @@ function root() {
 }
 
 function showLogin(message = '') {
+  lastRouteKey = null; // en tornar a entrar, la ruta "canvia" i es va a dalt
   clear(root()).appendChild(renderLogin({ message, onSuccess: () => boot() }));
 }
 
@@ -135,6 +244,7 @@ async function boot() {
 
   // 1) Sessió: sense token, no es carrega cap dada.
   if (!api.getToken()) {
+    lastRouteKey = null;
     clear(el).appendChild(renderLogin({ onSuccess: () => boot() }));
     return;
   }

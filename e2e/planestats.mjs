@@ -133,8 +133,21 @@ try {
   await page.waitForSelector('.dialog', { state: 'detached', timeout: 5000 }).catch(() => {});
   await page.waitForTimeout(300);
   const omitted = await waitForAria('9 de novembre de 2026', /Omesa/);
-  if (!/Omesa/.test(omitted || '')) problems.push('L\'omissió no es veu a la casella: ' + (omitted || '(cap)'));
-  else log('✓ omesa → fora dels pendents, amb traça');
+  if (!/Omesa/.test(omitted || '')) {
+    const stored = await page.evaluate(() => {
+      const key = Object.keys(localStorage).find((k) => /glp1/i.test(k)) || Object.keys(localStorage)[0];
+      try {
+        const db = JSON.parse(localStorage.getItem(key) || '{}');
+        const p = (db.patients || [])[0];
+        const plans = (p && p.treatments && p.treatments[0] && p.treatments[0].plans) || [];
+        return plans.map((x) => `${x.date}:${x.status}`).join(' ');
+      } catch { return '(no llegible)'; }
+    }).catch(() => null);
+    problems.push('L\'omissió no es veu a la casella: ' + (omitted || '(cap)')
+      + ' | desat: ' + stored);
+  } else {
+    log('✓ omesa → fora dels pendents, amb traça');
+  }
   await shot('81-omesa');
 
   // --- tornar al pla ------------------------------------------------------
@@ -241,12 +254,41 @@ try {
   const editValue = await page.locator('.dialog input[name="value"]').inputValue();
   if (editValue !== '7.5') problems.push('L\'editor no carrega la dosi de la fase: ' + editValue);
   await page.locator('.dialog input[name="durationDays"]').fill('28');
+  // el camp de durada ha de recalcular la data de fi DINS del diàleg abans de desar
+  const endInDialog = await page.locator('.dialog input[name="endDate"]').inputValue().catch(() => '');
+  if (endInDialog !== '2026-12-28') {
+    problems.push('La durada no ha recalculat la data de fi al diàleg: ' + endInDialog);
+  }
   await page.locator('.dialog').getByRole('button', { name: 'Desa', exact: true }).click();
   await page.waitForTimeout(300);
   await page.waitForSelector('.dialog', { state: 'detached', timeout: 5000 }).catch(() => {});
-  const edited = await page.locator('.schedules__row').filter({ hasText: '01/12/2026' }).first().innerText().catch(() => '');
-  if (!/28\/12\/2026/.test(edited)) problems.push('La durada no ha mogut la data de fi: ' + edited.replace(/\n/g, ' '));
-  else log('✓ editar la durada recalcula la data de fi');
+  // es sondeja: la fila es re-renderitza amb el nou tram
+  const readPhaseRow = () => page.locator('.schedules__row').filter({ hasText: '01/12/2026' }).first()
+    .innerText().catch(() => '');
+  let edited = '';
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    edited = await readPhaseRow();
+    if (/28\/12\/2026/.test(edited)) break;
+    await page.waitForTimeout(150);
+  }
+  if (!/28\/12\/2026/.test(edited)) {
+    const open = await page.locator('.dialog').count();
+    const dlgInfo = open
+      ? (await page.locator('.dialog').first().innerText().catch(() => '')).replace(/\n/g, ' | ').slice(0, 320)
+      : '(sense diàleg)';
+    const stored = await page.evaluate(() => {
+      const key = Object.keys(localStorage).find((k) => /glp1/i.test(k)) || Object.keys(localStorage)[0];
+      try {
+        const db = JSON.parse(localStorage.getItem(key) || '{}');
+        const p = (db.patients || [])[0];
+        const sch = (p && p.treatments && p.treatments[0] && p.treatments[0].schedules) || [];
+        return sch.map((x) => `${x.startDate}>${x.endDate}:${x.durationDays}`).join(' ');
+      } catch { return '(no llegible)'; }
+    }).catch(() => null);
+    problems.push('La durada no ha mogut la data de fi: ' + edited.replace(/\n/g, ' ')
+      + ` | diàlegs oberts: ${open} → ${dlgInfo}` + ' | desat: ' + stored);
+  } else log('✓ editar la durada recalcula la data de fi');
   await shot('84-fase-editada');
 } catch (err) {
   problems.push(`pas «${step}» → ` + err.message.split('\n').slice(0, 3).join(' ⏎ '));
@@ -258,3 +300,4 @@ await browser.close();
 console.log('\n=== PROBLEMES ===');
 if (problems.length) problems.forEach((p) => console.log('•', p));
 else console.log('cap');
+process.exit(problems.length ? 1 : 0);
