@@ -118,6 +118,27 @@ En aquesta màquina el Chromium de Playwright necessita
 
 ---
 
+### Git
+
+El projecte viu a **github.com/spicouc/glp1** (branca `main`). Al final de cada
+tongada de feina:
+
+```bash
+npm run push                 # git add -A + commit amb resum automàtic + push
+npm run push -- "Missatge"   # missatge propi
+```
+
+- **`tools/git-push.sh`** no fa res si no hi ha canvis; si el push falla, el
+  commit local es conserva i et diu com repetir-lo.
+- **`.githooks/pre-commit`** (activat amb `git config core.hooksPath .githooks`)
+  **bloqueja** qualsevol intent de pujar `.env`, `*.log`, `__pycache__/`,
+  `node_modules/` o claus — protecció doble amb el `.gitignore`.
+- Els secrets mai no surten del teu disc: `.env` (contrasenya d'admin) i els
+  logs estan ignorats i, a més, el hook ho impedeix (prova: `git add -f .env`
+  → el commit queda bloquejat).
+
+---
+
 ## Arquitectura
 
 Tres capes separades des del primer dia; canviar l'emmagatzematge no toca cap vista.
