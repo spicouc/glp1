@@ -175,9 +175,27 @@ try {
     const quickHtml = await page.locator('.quick').innerHTML().catch(() => '(sense registre ràpid)');
     problems.push('No es veuen les dosis ràpides: ' + quickHtml.replace(/\s+/g, ' ').slice(0, 300));
   } else {
-    await doseChip.click();
+    // P0: es registra una dosi DIFERENT de la prevista → cap proposta futura
+    // es reescriu i la data queda enllaçada igualment.
+    const otherChip = page.locator('.quick .dosechip').filter({ hasText: /^5 mg/ }).first();
+    await (await otherChip.count() ? otherChip : doseChip).click();
+    const plan22Before = (await ariaOf('22 de novembre de 2026')) || '';
     await page.locator('.day[aria-label^="15 de novembre de 2026"]').click();
+    await page.waitForSelector('.dialog', { timeout: 5000 });
+    const confirmTxt = (await page.locator('.dialog').innerText()).replace(/\n/g, ' ');
+    if (!/Registrar .*el 15\/11\/2026/.test(confirmTxt)) {
+      problems.push('El registre no demana confirmació amb data: ' + confirmTxt.slice(0, 180));
+    }
+    await page.locator('.dialog').getByRole('button', { name: 'Registra', exact: true }).click();
+    await page.waitForSelector('.dialog', { state: 'detached', timeout: 5000 }).catch(() => {});
     await page.waitForTimeout(400);
+    const plan22After = (await ariaOf('22 de novembre de 2026')) || '';
+    if (plan22Before !== plan22After) {
+      problems.push('Registrar una dosi diferent ha reescrit una proposta futura: '
+        + (plan22Before || '(cap)') + ' → ' + (plan22After || '(cap)'));
+    } else {
+      log('✓ registrar 5 mg no reescriu la proposta del 22/11:', plan22After.slice(0, 70));
+    }
   }
   const real15 = await waitForAria('15 de novembre de 2026', /clics/);
   if (!/clics/.test(real15 || '')) problems.push('El registre real no es va crear: ' + (real15 || '(cap)'));

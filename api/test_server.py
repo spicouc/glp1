@@ -474,6 +474,44 @@ class ApiTestCase(unittest.TestCase):
         self.assertIsNone(plan["registeredAdminId"], "torna a estar pendent")
         self.assertEqual(plan["status"], "planned")
 
+    def test_19b_enllac_amb_discrepancia_de_dosi(self):
+        """Registrar una dosi diferent tanca igualment la proposta (P0)."""
+        token = self.login()
+        plan = {"id": "pln19b", "date": "2026-11-01", "penId": "pen_p19b",
+                "mode": "clicks", "value": 15, "amount": 15, "unit": "clicks",
+                "mg": 2.5, "registeredAdminId": None, "status": "planned"}
+        doc = self._patient("p19b", "2099-03-01T00:00:00Z",
+                            admins=[self._admin("a19b", "2026-11-01", amount=30, pen="pen_p19b", key="k-19b")],
+                            plans=[plan])
+        doc["treatments"][0]["pens"][0]["id"] = "pen_p19b"
+        status, data = self.request("PUT", "/api/patients", {"patients": [doc]}, token=token)
+        self.assertEqual(status, 200, data)
+        t = next(p for p in data["patients"] if p["id"] == "p19b")["treatments"][0]
+        self.assertEqual(t["plans"][0]["registeredAdminId"], "a19b", "es vincula malgrat la diferència")
+        self.assertEqual(t["plans"][0]["amount"], 15, "la proposta conserva la dosi prescrita")
+        self.assertEqual(t["administrations"][0]["amount"], 30, "l'administració conserva la dosi real")
+
+    def test_19c_continuacio_auto_nomes_amb_consentiment(self):
+        """`autoPlan` mai és `true` sense consentiment explícit (P0)."""
+        token = self.login()
+        # tractament heretat del valor per defecte: sense consentiment
+        doc = self._patient("p19c", "2099-03-02T00:00:00Z")
+        doc["treatments"][0]["autoPlan"] = True
+        status, data = self.request("PUT", "/api/patients", {"patients": [doc]}, token=token)
+        self.assertEqual(status, 200, data)
+        t = next(p for p in data["patients"] if p["id"] == "p19c")["treatments"][0]
+        self.assertFalse(t["autoPlan"], "sense consentiment queda aturada")
+        self.assertFalse(t["autoPlanConsent"])
+
+        # consentiment explícit des del client → es respecta
+        doc2 = self._patient("p19d", "2099-03-03T00:00:00Z")
+        doc2["treatments"][0]["autoPlan"] = True
+        doc2["treatments"][0]["autoPlanConsent"] = True
+        status, data = self.request("PUT", "/api/patients", {"patients": [doc2]}, token=token)
+        self.assertEqual(status, 200, data)
+        t2 = next(p for p in data["patients"] if p["id"] == "p19d")["treatments"][0]
+        self.assertTrue(t2["autoPlan"], "amb consentiment es manté activada")
+
     def test_20_auditoria_registra_els_canvis(self):
         """Cada canvi queda al registre (append-only, amb actor)."""
         token = self.login()

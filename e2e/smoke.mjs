@@ -127,6 +127,10 @@ try {
 
   for (const d of ['1', '8', '15', '18']) {
     await page.locator(`.day[aria-label^="${d} de novembre de 2026"]`).click();
+    // #4: cap registre real sense confirmació
+    await page.waitForSelector('.dialog', { timeout: 5000 });
+    await page.locator('.dialog').getByRole('button', { name: 'Registra', exact: true }).click();
+    await page.waitForSelector('.dialog', { state: 'detached', timeout: 5000 }).catch(() => {});
     await page.waitForTimeout(120);
   }
   const after15 = await page.locator('.penbox__balance, .stat--real .stat__value').first().textContent();
@@ -136,6 +140,9 @@ try {
   // --- 5. Canvi a 30 clics: els anteriors no es toquen -------------------
   await page.locator('input[aria-label="Valor"]').fill('30');
   await page.locator(`.day[aria-label^="22 de novembre de 2026"]`).click();
+  await page.waitForSelector('.dialog', { timeout: 5000 });
+  await page.locator('.dialog').getByRole('button', { name: 'Registra', exact: true }).click();
+  await page.waitForSelector('.dialog', { state: 'detached', timeout: 5000 }).catch(() => {});
   await page.waitForTimeout(150);
 
   // espera determinista: la cel·la ha de mostrar el valor registrat
@@ -166,6 +173,20 @@ try {
   log('--- fitxa dia 22 ---\n' + sheet.slice(0, 400));
   await shot('07-fitxa-dia');
   await page.locator('.dialog__header button').click();
+  await page.waitForTimeout(250);
+
+  // --- 6b. Mode Pla: el tractament es proposa sol ------------------------
+  // El registre ràpid ja NO s'inventa dates (P0): per tenir propostes on
+  // aplicar els canvis de fase cal entrar al mode Pla, que sí que proposa el
+  // tractament estàndard del fàrmac.
+  await page.locator('.segmented--calendar').getByRole('button', { name: 'Pla', exact: true }).click();
+  await page.locator('.card', { hasText: 'Planificació per plomes' }).waitFor({ timeout: 8000 });
+  await page.locator('.day--plan').first().waitFor({ timeout: 12000 }).catch(() => {});
+  const smokePlans = await page.locator('.day--plan').count();
+  if (!smokePlans) problems.push('El mode Pla no ha proposat cap data');
+  else log(`✓ mode Pla: ${smokePlans} dates proposades (disseny inicial automàtic)`);
+  await page.locator('.segmented--calendar').getByRole('button', { name: 'Registre', exact: true }).click();
+  await page.waitForTimeout(200);
 
   // --- 7. Projecció + dosis completes ------------------------------------
   await page.locator('.tab', { hasText: 'Tractament' }).click();
@@ -192,6 +213,8 @@ try {
     problems.push('En canviar de fase no es pregunta per les propostes de la fase');
   }
   log('✓ tram de pauta afegit (30 clics des de 01/12)');
+  const phaseRows = await page.locator('.schedules__row').allInnerTexts().catch(() => []);
+  log('--- fases desades ---\n' + phaseRows.map((r) => r.replace(/\n/g, ' | ')).join('\n'));
 
   await page.locator('.tab', { hasText: 'Calendari' }).click();
   await page.waitForSelector('.projlist');

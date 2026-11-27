@@ -235,8 +235,10 @@ export function planPlanner({ patient, treatment, cal }) {
 
   // Primera visita al mode Pla: es proposa el tractament ESTÀNDARD de per sí
   // (primera dosi del fàrmac, cadència del fàrmac, tantes dosis com hi
-  // capiguin). L'usuari ho pot modificar o esborrar després.
-  if (treatment.autoPlan !== false && allPlans(treatment).length === 0) {
+  // capiguin). És un DISSENY inicial (es pot esborrar), res a veure amb la
+  // continuació automàtica en registrar, que és explícita i per defecte fora.
+  // L'usuari ho pot modificar o esborrar després.
+  if (allPlans(treatment).length === 0) {
     promptOnce(`stdplan:${treatment.id}`, () => {
       setTimeout(() => {
         if (allPlans(treatment).length > 0) return; // algú ja ha dissenyat algo
@@ -532,11 +534,14 @@ export function planPlanner({ patient, treatment, cal }) {
     h('label', { class: 'switch' },
       h('input', {
         type: 'checkbox',
-        checked: treatment.autoPlan !== false,
+        checked: treatment.autoPlan === true,
         onChange: (e) => {
-          treatment.autoPlan = e.target.checked;
+          const on = e.target.checked;
+          treatment.autoPlanConsent = on; // consentiment explícit
+          treatment.autoPlan = on;
           persist(patient);
           update('auto-plan');
+          toast(on ? t('plan.autoOn') : t('plan.autoOff'), { tone: on ? 'ok' : 'muted' });
         },
       }),
       h('span', {}, t('plan.auto'))),

@@ -81,12 +81,19 @@ def normalise_doc(doc):
     Additiu i idempotent: no modifica cap camp existent. Una app v2 reconstrueix
     els objectes sense els camps nous, així que sense això cada pujada d'un
     mòbil amb caché posaria a zero la caducitat, els costos, els estats, etc.
+
+    Excepció (issue #1 · P0): la continuació automàtica del pla només pot estar
+    activa amb consentiment explícit (`autoPlanConsent`), així que `autoPlan` es
+    deriva d'aquí. Atura també els tractaments heretats del valor per defecte
+    (true) i els clients vells que no coneixen el camp.
     """
     if not isinstance(doc, dict):
         return doc
     for treatment in doc.get("treatments") or []:
         if not isinstance(treatment, dict):
             continue
+        treatment["autoPlanConsent"] = bool(treatment.get("autoPlanConsent"))
+        treatment["autoPlan"] = treatment["autoPlanConsent"]
         for key in ("costs", "plans", "administrations", "schedules", "health", "pens"):
             treatment.setdefault(key, [])
         _fill(treatment.get("costs"), {
@@ -404,7 +411,12 @@ def recompute_balances(treatment):
 
 
 def link_plans(treatment):
-    """Port de `linkPlanToAdmin` / `unlinkPlanFromAdmin` (JS)."""
+    """Port de `linkPlanToAdmin` / `unlinkPlanFromAdmin` (JS).
+
+    La comparació no inclou la dosi: registrar una dosi diferent de la prevista
+    ha de tancar la proposta d'aquesta data igualment (la proposta conserva la
+    prescrita i l'administració, la real).
+    """
     admins = treatment.get("administrations") or []
     plans = treatment.get("plans") or []
     changed = 0
@@ -416,7 +428,6 @@ def link_plans(treatment):
                 pl.get("registeredAdminId") is None
                 and pl.get("date") == a.get("date")
                 and pl.get("penId") == a.get("penId")
-                and _num(pl.get("amount")) == _num(a.get("amount"))
             ):
                 pl["registeredAdminId"] = a.get("id")
                 pl["status"] = "administered"

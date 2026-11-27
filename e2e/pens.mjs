@@ -164,6 +164,10 @@ try {
   await page.locator('input[aria-label="Valor"]').fill('15');
   for (const d of ['1', '8', '15']) {
     await page.locator(`.day[aria-label^="${d} de novembre de 2026"]`).click();
+    // #4: cada registre real demana confirmació
+    await page.waitForSelector('.dialog', { timeout: 5000 });
+    await page.locator('.dialog').getByRole('button', { name: 'Registra', exact: true }).click();
+    await page.waitForSelector('.dialog', { state: 'detached', timeout: 5000 }).catch(() => {});
     await page.waitForTimeout(150);
   }
   log('✓ 3 administracions registrades a la ploma #1');
@@ -198,6 +202,9 @@ try {
   await page.locator('input[aria-label="Valor"]').fill('15');
   for (const d of ['22', '25']) {
     await page.locator(`.day[aria-label^="${d} de novembre de 2026"]`).click();
+    await page.waitForSelector('.dialog', { timeout: 5000 });
+    await page.locator('.dialog').getByRole('button', { name: 'Registra', exact: true }).click();
+    await page.waitForSelector('.dialog', { state: 'detached', timeout: 5000 }).catch(() => {});
     await page.waitForTimeout(150);
   }
   log('✓ 2 administracions registrades a la ploma #2');
@@ -298,6 +305,10 @@ try {
   await page.locator('.segmented__btn', { hasText: 'Clics' }).first().click();
   await page.locator('input[aria-label="Valor"]').fill('90');
   await page.locator('.day[aria-label^="26 de novembre de 2026"]').click();
+  // la creació d'una administració real demana confirmació (#4)
+  await page.waitForSelector('.dialog', { timeout: 5000 });
+  await page.locator('.dialog').getByRole('button', { name: 'Registra', exact: true }).click();
+  await page.waitForSelector('.dialog', { state: 'detached', timeout: 5000 }).catch(() => {});
   await page.waitForTimeout(400);
   await page.locator('.day[aria-label^="26 de novembre de 2026"]').click();
   await page.waitForSelector('.dialog');

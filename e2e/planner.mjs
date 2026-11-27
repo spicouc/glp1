@@ -67,6 +67,23 @@ try {
   await planner.waitFor({ timeout: 5000 });
   log('✓ mode Pla actiu (planner visible)');
 
+  // --- #1 · P0: la continuació automàtica és opt-in -----------------------
+  const autoLabel = planner.locator('label.switch').filter({ hasText: 'Continua la dosi' });
+  if (!(await autoLabel.count())) {
+    problems.push('No es troba l\'interruptor de continuació automàtica');
+  } else {
+    const autoInput = autoLabel.locator('input[type="checkbox"]');
+    if (await autoInput.isChecked()) {
+      problems.push('La continuació automàtica no pot estar activada sense consentiment explícit');
+    } else {
+      log('✓ continuació automàtica per defecte DESACTIVADA (cal consentiment)');
+    }
+    await autoLabel.click(); // consentiment explícit → es permet provar-ne la continuació
+    await page.waitForTimeout(200);
+    if (!(await autoInput.isChecked())) problems.push('No s\'ha activat la continuació automàtica');
+    else log('✓ consentiment activat des del planificador');
+  }
+
   // ploma #2 (10 mg) — la #1 ve creada amb el tractament
   await planner.locator('select').first().selectOption({ index: 1 });
 

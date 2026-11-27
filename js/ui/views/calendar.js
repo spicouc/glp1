@@ -395,7 +395,7 @@ export function renderCalendar(patient) {
     return Boolean(p.penId) && Number(p.value) > 0 && isValidISO(p.startDate);
   };
 
-  const onDay = (iso) => {
+  const onDay = async (iso) => {
     const admins = adminsByDate.get(iso) || [];
     const plans = planMap.get(iso) || [];
 
@@ -526,7 +526,18 @@ export function renderCalendar(patient) {
       toast(t('cal.quickInvalid'), { tone: 'warn' });
       return;
     }
-    const result = createQuickAdmin({ patient, treatment, date: iso, pen: activePen(treatment) || pen, quick: cal.quick });
+    const targetPen = activePen(treatment) || pen;
+    const confirm = await confirmDialog(
+      t('cal.quickConfirm', {
+        value: `${formatNumber(Number(cal.quick.value))} ${cal.quick.mode === 'clicks' ? t('admin.clicks') : 'mg'}`,
+        date: fmtShort(iso),
+        pen: `#${penNumber(treatment.pens, targetPen.id)}`,
+      }),
+      { danger: false, okLabel: t('cal.quickConfirmOk') }
+    );
+    if (!confirm) return; // res es desa sense confirmació explícita
+
+    const result = createQuickAdmin({ patient, treatment, date: iso, pen: targetPen, quick: cal.quick });
     if (!result.ok) {
       toast(t('cal.quickInvalid'), { tone: 'warn' });
       return;

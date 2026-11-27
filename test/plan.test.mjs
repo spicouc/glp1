@@ -2,6 +2,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { diffDays } from '../js/core/dates.js';
 import {
   allAdministrations,
   allPlans,
@@ -227,16 +228,24 @@ function plannedWeeks() {
   return { patient, treatment, pen };
 }
 
-test('en registrar una dosi, la continuació automàtica allarga el pla amb la mateixa dosi', () => {
+test('la continuació automàtica només passa amb consentiment explícit i mai reescriu', () => {
   const { treatment, pen } = plannedWeeks();
 
-  // Sense pla mai s'inventa cap data
-  assert.equal(ensurePlanContinuation(base().treatment, { today: TODAY }).created.length, 0);
+  // 1) Per defecte (i als tractaments existents) no es toca res del pla
+  assert.equal(treatment.autoPlan, false, 'per defecte desactivada');
+  assert.equal(ensurePlanContinuation(treatment, { today: TODAY }).created.length, 0, 'sense consentiment no continua');
 
-  // 4 dates futures planificades → no cal allargar res
-  assert.equal(ensurePlanContinuation(treatment, { today: TODAY }).created.length, 0);
+  // 2) Sense disseny previ no hi ha res a continuar: mai s'infereix una data
+  const bare = base();
+  bare.treatment.autoPlan = true;
+  assert.equal(ensurePlanContinuation(bare.treatment, { today: TODAY }).created.length, 0, 'sense pla no es inventa cap data');
 
-  // es registra la primera → en queden 3 → s'allarga 1 amb la mateixa dosi i interval
+  // 3) Amb consentiment, 4 dates futures → no cal allargar res
+  treatment.autoPlan = true;
+  assert.equal(ensurePlanContinuation(treatment, { today: TODAY }).created.length, 0, 'ja hi ha 4 futures');
+
+  // 4) Es registra la primera → en queden 3 → se n'afegeix 1 amb la DOSI DEL
+  //    DISSENY (15 clics), amb la mateixa ploma i el mateix interval
   const adm = createAdministration({
     date: '2026-11-20', penId: pen.id, mode: 'clicks', value: 15, amount: 15, unit: 'clicks', mg: 2.5,
   });
@@ -245,8 +254,9 @@ test('en registrar una dosi, la continuació automàtica allarga el pla amb la m
 
   const cont = ensurePlanContinuation(treatment, { today: TODAY });
   assert.equal(cont.created.length, 1);
+  assert.equal(cont.relevelled, 0, 'mai re-nivella el que ja estava escrit');
   assert.equal(cont.created[0].date, '2026-12-18', 'última data planificada + interval');
-  assert.equal(cont.created[0].amount, 15, 'mateixa dosi');
+  assert.equal(cont.created[0].amount, 15, 'dosi del disseny');
   assert.equal(cont.created[0].penId, pen.id, 'mateixa ploma');
   assert.equal(cont.created[0].registeredAdminId, null);
 
@@ -256,7 +266,7 @@ test('en registrar una dosi, la continuació automàtica allarga el pla amb la m
   assert.ok(planCoverage(treatment).find((r) => r.pen.id === pen.id).doses >= 4);
 });
 
-test('la dosi REGISTRADA mana: re-nivella les propostes futures (pujar)', () => {
+test('registrar una dosi diferent conserva TOTES les dosis futures (P0)', () => {
   const { treatment, pen } = plannedWeeks(); // 4 propostes a 15 clics
   const adm = createAdministration({
     date: '2026-11-20', penId: pen.id, mode: 'clicks', value: 30, amount: 30, unit: 'clicks', mg: 5,
@@ -264,17 +274,21 @@ test('la dosi REGISTRADA mana: re-nivella les propostes futures (pujar)', () => 
   treatment.administrations.push(adm);
 
   const res = applyRegisteredDose(treatment, adm, { today: TODAY });
-  assert.equal(res.relevelled, 4, 'les 4 propostes passen a la dosi registrada');
-  assert.equal(res.created.length, 0, 'ja hi havia 4 futures, no cal afegir-ne');
-  assert.ok(res.linked, 'la proposta d’aquell dia queda com a feta');
+  assert.equal(res.relevelled, 0, 'cap reanivellament');
+  assert.ok(res.linked, 'la discrepància no impedeix tancar la proposta d\'aquell dia');
+  assert.equal(res.linked.amount, 15, 'la proposta conserva la dosi PRESCRITA (15)');
+  assert.equal(res.linked.mg, 2.5, 'i el mg prescrit');
+  assert.equal(adm.amount, 30, 'l\'administració conserva la dosi REAL (30)');
+  assert.equal(res.created.length, 0, 'sense consentiment no s\'allarga el pla');
 
   const pending = treatment.plans.filter((p) => !p.registeredAdminId);
   assert.equal(pending.length, 3, 'la del 20/11 queda registrada');
-  assert.ok(pending.every((p) => p.amount === 30), 'totes a 30 clics: ' + pending.map((p) => p.amount).join(','));
-  assert.equal(planCoverage(treatment).find((r) => r.pen.id === pen.id).pendingAmount, 90, '3 × 30');
+  assert.ok(pending.every((p) => p.amount === 15), 'les futures segueixen a 15: ' + pending.map((p) => p.amount).join(','));
+  assert.equal(planCoverage(treatment).find((r) => r.pen.id === pen.id).pendingAmount, 45, '3 × 15');
+  assert.equal(treatment.administrations.length, 3, '2 previs + 1 nou');
 });
 
-test('sense pla previ, registrar una dosi proposa les setmanes següents a la mateixa dosi', () => {
+test('sense pla previ, registrar una dosi no s\'inventa cap data futura', () => {
   const { treatment, pen } = base(); // cap entrada de pla
   assert.equal(pendingPlans(treatment).length, 0);
 
@@ -283,18 +297,32 @@ test('sense pla previ, registrar una dosi proposa les setmanes següents a la ma
   });
   treatment.administrations.push(adm);
 
+  treatment.autoPlan = true; // fins i tot amb consentiment: no hi ha disseny
   const res = applyRegisteredDose(treatment, adm, { today: TODAY });
-  assert.equal(res.relevelled, 0, 'no hi ha res a re-nivellar encara');
-  assert.equal(res.created.length, 4, 'es proposen 4 dates al davant');
-  assert.ok(res.created.every((p) => p.amount === 30), 'amb la dosi registrada');
-  assert.ok(res.created.every((p) => p.date > '2026-11-19'), 'totes posteriors al registre');
-  assert.deepEqual(
-    res.created.map((p) => p.date),
-    ['2026-11-26', '2026-12-03', '2026-12-10', '2026-12-17'],
-    'cadència de la pauta (7 dies)'
-  );
-  assert.ok(res.created.every((p) => p.penId === pen.id), 'mateixa ploma');
-  assert.equal(res.linked, null, 'el pla comença després del registre (no hi havia proposta per a aquesta data)');
+  assert.equal(res.relevelled, 0, 'no hi ha res a re-nivellar');
+  assert.equal(res.created.length, 0, 'no es desplega una pauta des d\'un registre solt');
+  assert.equal(res.linked, null, 'no hi havia cap proposta per a aquesta data');
+  assert.equal(treatment.plans.length, 0, 'el pla segueix buit');
+  assert.equal(treatment.administrations.length, 3, 'el registre real hi és (2 previs + 1 nou)');
+});
+
+test('mai genera dates passades: la continuació comença a partir d\'avui', () => {
+  const { treatment, pen } = base();
+  treatment.autoPlan = true;
+  // Pla antic: totes les dates del gener i encara pendents
+  treatment.plans = ['2026-01-01', '2026-01-08'].map((date) =>
+    createPlanEntry({ date, penId: pen.id, mode: 'clicks', value: 15, amount: 15, unit: 'clicks', mg: 2.5 }));
+
+  const today = '2026-11-27';
+  const res = ensurePlanContinuation(treatment, { today });
+  assert.ok(res.created.length > 0, 's\'han d\'afegir dates futures');
+  assert.ok(res.created.every((p) => p.date >= today),
+    'cap data anterior a avui: ' + res.created.map((p) => p.date).join(','));
+  // cadència correcta des de la darrera data del disseny, saltant fins a avui
+  for (let i = 1; i < res.created.length; i += 1) {
+    assert.equal(diffDays(res.created[i - 1].date, res.created[i].date), 7, 'interval setmanal respectat');
+  }
+  assert.ok(planCoverage(treatment).find((r) => r.pen.id === pen.id).doses >= 0);
 });
 
 test('esborrar tot el registre de dosis: saldo a l\'inicial i pla pendent un altre cop', () => {
@@ -403,11 +431,13 @@ test('la continuació s\'atura si està desactivada, la ploma no és activa o no
   assert.equal(ensurePlanContinuation(a.treatment, { today: TODAY }).created.length, 0, 'autoPlan desactivat');
 
   const b = plannedWeeks();
+  b.treatment.autoPlan = true;
   b.pen.status = 'finished';
   register1(b);
   assert.equal(ensurePlanContinuation(b.treatment, { today: TODAY }).created.length, 0, 'ploma acabada');
 
   const c = plannedWeeks();
+  c.treatment.autoPlan = true;
   c.pen.initialCapacity = 45; // saldo 15 → no caben més dosis de 15
   register1(c);
   assert.equal(ensurePlanContinuation(c.treatment, { today: TODAY }).created.length, 0, 'ploma sense saldo');

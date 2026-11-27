@@ -864,13 +864,20 @@ function isValidPlanDate(iso) {
  * Enllaça automàticament la dosi prevista d'una data quan es registra de
  * manera real amb la mateixa ploma (el pla queda "complert", no desapareix).
  */
+/**
+ * Enllaça una proposta amb l'administració real de la mateixa data i ploma.
+ *
+ * La comparació NO inclou la dosi: registrar una dosi diferent de la prevista
+ * ha de tancar igualment la proposta d'aquesta data (l'acceptació demana que
+ * "l'enllaç amb discrepància conservi la dosi prescrita i la real": la proposta
+ * manté el que estava escrit i l'administració, el que es va punxar).
+ */
 export function linkPlanToAdmin(treatment, admin) {
   if (!treatment || !admin) return null;
   const open = (treatment.plans || []).find(
     (p) => !p.registeredAdminId &&
       p.date === admin.date &&
-      p.penId === admin.penId &&
-      Number(p.amount) === Number(admin.amount)
+      p.penId === admin.penId
   );
   if (open) open.registeredAdminId = admin.id;
   return open || null;
@@ -916,159 +923,117 @@ export function planInterval(treatment, entries = allPlans(treatment)) {
 export const AUTO_PLAN_MIN_FUTURE = 4;
 
 /**
- * Continuació automàtica del pla.
+ * Extensió del pla (continuació automàtica).
  *
- * Amb `ref` (la dosi acaben de registrar):
- *   1. re-nivella les propostes PENDENTS d'aquella ploma des de la data del
- *      registre a la dosi registrada (pujar o baixar) — és una proposta, no un
- *      registre;
- *   2. assegura que hi hagi `minFuture` dates proposades al davant, afegint-ne
- *      de noves amb la mateixa dosi i el mateix interval.
- * Sense `ref` (des de l'editor del pla) continua des de l'última data del disseny.
+ * Afegix `minFuture` dates proposades al davant segons el DISSENY actual
+ * (l'última data del pla, amb la seva dosi i el seu interval).
  *
- * S'atura si:
- *   - l'usuari ha desactivat `treatment.autoPlan`
- *   - la ploma de referència ja no és activa
- *   - la ploma no admet més dosis (llavors toca crear la ploma següent)
- *   - ja hi ha prou dates futures proposades
+ * Perquè registrar una administració no reescriu el pla (issue #1 · P0):
+ *   - **cal activar `treatment.autoPlan` explícitament**; per defecte és
+ *     `false`, també als tractaments ja existents (sense consentiment no
+ *     s'hi toca res);
+ *   - **mai re-nivella** propostes existents: els canvis sobre el que ja està
+ *     escrit només arriben per edicions amb previsualització (fase, pinta,
+ *     editor del pla, actualitzar futures d'una dosi real);
+ *   - **no infereix la dosi del registre**: mana la del disseny, no la que
+ *     es va punxar;
+ *   - **no genera dates passades** i respecta les dates ja ocupades per
+ *     propostes (en qualsevol estat) o per administracions reals.
  *
- * No toca cap registre real. Retorna {created, relevelled} sense inserir-les.
+ * S'atura si: `autoPlan` desactivat, no hi ha pla, la ploma ja no és activa,
+ * la ploma no admet més dosis o ja hi ha prou dates futures.
+ *
+ * No toca cap registre real. Retorna `{created, relevelled}` sense inserir-les
+ * (`relevelled` és sempre 0: es conserva el camp per compatibilitat amb la UI).
  */
 export function ensurePlanContinuation(treatment, {
   minFuture = AUTO_PLAN_MIN_FUTURE,
   today = todayISO(),
   maxNew = 52,
-  ref = null,
 } = {}) {
   const empty = { created: [], relevelled: 0 };
-  if (!treatment || treatment.autoPlan === false) return empty;
+  if (!treatment || treatment.autoPlan !== true) return empty;
 
-  let relevelled = 0;
-
-  if (ref && Number(ref.amount) > 0 && ref.penId) {
-    // La dosi registrada mana: totes les propostes pendents d'aquesta ploma
-    // des de la data del registre passen al seu nivell.
-    const target = {
-      penId: ref.penId,
-      mode: ref.mode,
-      value: ref.value,
-      amount: Number(ref.amount),
-      unit: ref.unit,
-      mg: ref.mg ?? null,
-    };
-    for (const p of pendingPlans(treatment)) {
-      if (p.penId !== target.penId || cmpDates(p.date, ref.date) < 0) continue;
-      const same = p.mode === target.mode
-        && p.value === target.value
-        && Number(p.amount) === target.amount
-        && p.mg === target.mg;
-      if (same) continue;
-      p.mode = target.mode;
-      p.value = target.value;
-      p.amount = target.amount;
-      p.unit = target.unit;
-      p.mg = target.mg;
-      relevelled += 1;
-    }
-  }
-
-  // Àncora de la continuació: el pla continua on diu el disseny (última data),
-  // excepte que no hi hagi pla encara → llavors neix del registre.
   const existing = allPlans(treatment);
-  const target = ref && Number(ref.amount) > 0 && ref.penId
-    ? { penId: ref.penId, mode: ref.mode, value: ref.value, amount: Number(ref.amount), unit: ref.unit, mg: ref.mg ?? null }
-    : null;
+  if (!existing.length) return empty; // sense disseny no hi ha res a continuar
 
-  let anchorDate;
-  let reference;
-  if (existing.length) {
-    const last = existing[existing.length - 1];
-    anchorDate = last.date;
-    reference = target && target.penId === last.penId
-      ? target // la dosi registrada mana sobre el valor del disseny
-      : {
-          penId: last.penId,
-          mode: last.mode,
-          value: last.value,
-          amount: Number(last.amount || 0),
-          unit: last.unit,
-          mg: last.mg ?? null,
-        };
-  } else if (target) {
-    anchorDate = ref.date;
-    reference = target;
-  } else {
-    return { created: [], relevelled };
-  }
-
-  const pen = penById(treatment, reference.penId);
-  const amount = Number(reference.amount || 0);
-  if (!pen || pen.status !== 'active' || amount <= 0) return { created: [], relevelled };
+  const last = existing[existing.length - 1];
+  const pen = penById(treatment, last.penId);
+  const amount = Number(last.amount || 0);
+  if (!pen || pen.status !== 'active' || amount <= 0) return empty;
 
   const pending = pendingPlans(treatment);
   let future = pending.filter((p) => p.date >= today).length;
-  if (future >= minFuture) return { created: [], relevelled };
+  if (future >= minFuture) return { created: [], relevelled: 0 };
 
   const drug = treatmentDrug(treatment);
-  const all = allPlans(treatment);
-  const interval = all.length >= 2
-    ? planInterval(treatment, all)
-    : intervalAt(treatment, anchorDate, drug);
+  const interval = existing.length >= 2
+    ? planInterval(treatment, existing)
+    : intervalAt(treatment, last.date, drug);
 
   const balance = penBalance(treatment, pen);
+  // Només el que queda per administrar a partir d'AVUI compromet saldo: el que
+  // és passat ja va passar, i comptar-ho dues vegades aturava l'extensió abans
+  // d'hora (o, pitjor, treia dates en el passat).
   let used = pending
-    .filter((p) => p.penId === pen.id)
+    .filter((p) => p.penId === pen.id && p.date >= today)
     .reduce((s, p) => s + Number(p.amount || 0), 0);
 
-  // una data amb administració real o amb una altra proposta ja ocupada es salta
+  // una data amb administració real o amb una proposta ja ocupada es salta
+  // (les cancel·lades/omeses segueixen reservant la seva data)
   const occupied = (iso) =>
     allAdministrations(treatment).some((a) => a.date === iso) ||
-    pending.some((p) => p.date === iso);
+    allPlans(treatment).some((p) => p.date === iso);
 
-  let cursor = anchorDate;
-  const created = [];
+  // Àncora: la primera data nova mai pot ser en el passat. Avancem fins que la
+  // PRÒPIA data que es crearia sigui avui o endavant.
+  let cursor = last.date;
   let guard = 0;
+  while (cmpDates(addDays(cursor, interval), today) < 0 && guard < maxNew * 4) {
+    guard += 1;
+    cursor = addDays(cursor, interval);
+  }
+  if (cmpDates(addDays(cursor, interval), today) < 0) return { created: [], relevelled: 0 };
+
+  const created = [];
+  guard = 0;
   while (future < minFuture && created.length < maxNew && guard < maxNew * 4) {
     guard += 1;
     cursor = addDays(cursor, interval);
+    if (cmpDates(cursor, today) < 0) continue; // cinturó i arnesos: mai passat
     if (occupied(cursor)) continue;
     used += amount;
     if (balance - used < 0) break; // la ploma no arriba: no s'afegix res
     created.push(createPlanEntry({
       date: cursor,
-      penId: reference.penId,
-      mode: reference.mode,
-      value: reference.value,
-      amount: reference.amount,
-      unit: reference.unit,
-      mg: reference.mg ?? null,
+      penId: last.penId,
+      mode: last.mode,
+      value: last.value,
+      amount: last.amount,
+      unit: last.unit,
+      mg: last.mg ?? null,
     }));
     future += 1;
   }
-  return { created, relevelled };
+  return { created, relevelled: 0 };
 }
 
 /**
- * Converteix un registre real en el nou centre del pla: re-nivella les
- * propostes futures a la dosi registrada, continua el pla i tanca la proposta
- * d'aquella data si n'hi ha.
+ * Registre real → 1) tanca (enllaça) la proposta d'aquesta data i 2) si
+ * l'usuari ha activat la continuació, afegeix dates futures noves.
+ *
+ * Mai modifica les propostes ja existents: una dosi diferent de la prevista
+ * conserva tant la prescrita (a la proposta) com la real (a l'administració).
+ * L'enllaç es fa ABANS de calcular la cobertura perquè la data registrada no
+ * compti com a dosi pendent.
  */
 export function applyRegisteredDose(treatment, admin, opts = {}) {
   if (!treatment || !admin) return { created: [], relevelled: 0, linked: null };
-  const ref = {
-    penId: admin.penId,
-    mode: admin.mode,
-    value: admin.value,
-    amount: Number(admin.amount || 0),
-    unit: admin.unit,
-    mg: admin.mg ?? null,
-    date: admin.date,
-  };
-  const result = ensurePlanContinuation(treatment, { ...opts, ref });
+  const linked = linkPlanToAdmin(treatment, admin);
+  const result = ensurePlanContinuation(treatment, opts);
   if (result.created.length) {
     treatment.plans = [...(treatment.plans || []), ...result.created];
   }
-  const linked = linkPlanToAdmin(treatment, admin);
   return { ...result, linked };
 }
 

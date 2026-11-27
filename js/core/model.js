@@ -49,7 +49,11 @@ export function createTreatment({ drugId, startDate, notes = '' } = {}) {
     plans: [],
     health: [],
     costs: [], // despeses del tractament (compra de plomes, altres)
-    autoPlan: true, // continuar la dosi planificada les setmanes següents en registrar
+    // Continuació automàtica del pla en registrar. Per DEFECTE desactivada
+    // (issue #1 · P0): sense consentiment explícit no es toca cap proposta
+    // futura, tampoc als tractaments creats abans del canvi (`autoPlanConsent`).
+    autoPlan: false,
+    autoPlanConsent: false,
     schedules: [
       createSchedule({
         startDate: startDate || todayISO(),
@@ -534,7 +538,11 @@ function normaliseTreatment(t) {
       source: c.source || 'manual',
       createdAt: c.createdAt || nowStamp(),
     })),
-    autoPlan: t.autoPlan !== false,
+    autoPlanConsent: t.autoPlanConsent === true,
+    // L'efectiu mai pot ser `true` sense consentiment explícit: els tractaments
+    // creats amb el valor per defecte (true) abans del canvi queden aturats fins
+    // que algú activa l'interruptor des del planificador.
+    autoPlan: t.autoPlanConsent === true,
     deletedAt: t.deletedAt || null,
   };
 }

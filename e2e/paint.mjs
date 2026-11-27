@@ -162,8 +162,37 @@ try {
   await page.locator('.segmented__btn', { hasText: 'Clics' }).first().click();
   await page.locator('input[aria-label="Valor"]').fill('30');
   await page.locator('.day[aria-label^="26 de novembre de 2026"]').click();
-  await page.waitForTimeout(400);
-  if (await dialogOpen()) await closeDialog();
+  // --- REQUISIT (#4): cap administració real sense confirmació explícita ---
+  await page.waitForSelector('.dialog', { timeout: 5000 });
+  const noConfirmYet = await page.locator('.day--real[aria-label^="26 de novembre de 2026"]').count();
+  if (noConfirmYet) problems.push('S\'ha creat una administració real sense confirmació');
+  else log('✓ tocar un dia buit demana confirmació abans de crear un registre real');
+  const confirmTxt = (await page.locator('.dialog').innerText()).replace(/\n/g, ' ');
+  const confirmBtn = page.locator('.dialog').getByRole('button', { name: 'Registra', exact: true });
+  log('  diàleg:', confirmTxt.slice(0, 150),
+    '| botons:', JSON.stringify(await page.locator('.dialog button').allInnerTexts()));
+  if (!/Registrar .*el 26\/11\/2026/.test(confirmTxt)) {
+    problems.push('El diàleg de confirmació no resumeix dosi i data: ' + confirmTxt.slice(0, 180));
+  }
+  if (await confirmBtn.count()) {
+    try {
+      await confirmBtn.first().click({ timeout: 8000 });
+      await page.waitForSelector('.dialog', { state: 'detached', timeout: 5000 }).catch(() => {});
+      await page.waitForTimeout(400);
+    } catch (err) {
+      // Si no es pot clicar, el peu del diàleg queda fora de pantalla (el
+      // document desborda l'ample i a mòbil el layout viewport s'eixampla).
+      const diag = await page.evaluate(() => ({
+        win: `${window.innerWidth}x${window.innerHeight} doc=${document.documentElement.scrollWidth}`,
+        visual: window.visualViewport
+          ? `${Math.round(window.visualViewport.width)}x${Math.round(window.visualViewport.height)}@${window.visualViewport.scale}` : '—',
+      })).catch(() => null);
+      problems.push('No s\'ha pogut clicar «Registra»: ' + JSON.stringify(diag)
+        + ' :: ' + String(err.message || '').replace(/\s+/g, ' ').slice(0, 300));
+    }
+  } else {
+    problems.push('El diàleg de confirmació no té el botó «Registra»: ' + confirmTxt.slice(0, 240));
+  }
   const realDay = await ariaOf('26 de novembre de 2026');
   if (!/30 clics/.test(realDay || '')) problems.push('No s\'ha registrat la dosi real del 26/11: ' + (realDay || '(cap)'));
 

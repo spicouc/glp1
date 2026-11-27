@@ -67,6 +67,16 @@ body {
 
 body.has-dialog { overflow: hidden; }
 
+#app-root {
+  /* El document no pot superar mai l'ample de pantalla: sense això, a mòbil
+     Chrome "shrink-to-fit" eixampla el layout viewport (390 → 410 px) i el peu
+     dels diàlegs queda FORA de pantalla → els botons no es poden clicar.
+     `clip` retalla sense crear contenidor de scroll, així que els elements
+     sticky (pestanyes) segueixen funcionant; `hidden` és el fallback vell. */
+  overflow-x: hidden;
+  overflow-x: clip;
+}
+
 .skip {
   position: absolute;
   left: -9999px;
@@ -257,7 +267,7 @@ svg {
   gap: 2px;
   min-width: 0;
 }
-.stat__label { font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.stat__label { font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
 .stat__value { font-weight: 750; font-size: 1rem; overflow: hidden; text-overflow: ellipsis; }
 .stat--real .stat__value { color: var(--real); }
 .stat--alert { background: var(--alert-soft); border-color: #f3c9c9; }

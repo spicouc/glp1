@@ -52,9 +52,28 @@ function bootError(message) {
   );
 }
 
-function render() {
+/**
+ * Raons de re-renderització que arriben SOLES (sense que l'usuari hagi tocat
+ * res): la sincronització en segon pla (debounce de 900 ms) i la proposta
+ * automàtica de la primera visita al mode Pla.
+ */
+const BACKGROUND_REASONS = new Set(['sync', 'plan-standard']);
+
+/** Hi ha un camp de formulari a mig omplir? (llavors NO s'ha d'esborrar) */
+function editingInProgress() {
+  const active = document.activeElement;
+  if (!active || !/^(INPUT|SELECT|TEXTAREA)$/.test(active.tagName)) return false;
+  return Boolean(active.closest('form'));
+}
+
+function render(reason = 'state') {
   const el = root();
   if (!el) return;
+  // Un refresh en segon pla no pot esborrar el que s'està escrivint: la
+  // re-renderització substitueix tota la vista i els camps tornarien als
+  // valors per defecte (es perdia, per exemple, l'edició d'una fase). Es
+  // refrescarà amb el següent canvi real.
+  if (BACKGROUND_REASONS.has(reason) && editingInProgress()) return;
   try {
     const route = state.route;
     const view = route.name === 'admin'

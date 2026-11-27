@@ -75,9 +75,9 @@ capa `js/data/repository.js` ja està aïllada específicament per a això.
 
 ```bash
 npm run test:api       # tests de l'API (Python): auth, merge, rols, tokens, catàleg, tombes,
-                       #   duplicats, saldos, auditoria, purga (26)
+                       #   duplicats, saldos, auditoria, purga, enllaç amb discrepància (28)
 npm test               # tests unitaris: model, càlcul, pla, plomes, sync, catàleg,
-                       #   migració v3, estats, fases, inventari (100)
+                       #   migració v3, estats, fases, inventari (101)
 npm run e2e            # proves de navegador: arrenca la PILA AÏLLADA (:8098)
                        #   smoke.mjs   flux complet per la UI
                        #   pens.mjs    plomes: capacitat en clics, esborrar/restaurar,
@@ -262,6 +262,8 @@ compartida de l'equip, no per-metge).
     "status": "active",            // active | paused | finished
     "endReason": "", "notes": "",
     "deletedAt": null,             // tomba: tractament esborrat (es sincronitza)
+    "autoPlan": false,             // continuació automàtica (efectiu)
+    "autoPlanConsent": false,      // consentiment explícit: sense ell, autoPlan = false
     "costs": [                     // despeses en CÈNTIMS enters (mai floats)
       { "id": "cst_…", "date": "2026-11-01", "kind": "pen", "amountCents": 12900,
         "currency": "EUR", "penId": "pen_…", "notes": "", "source": "manual" }
@@ -576,8 +578,10 @@ destructiva és `Finalitza`, que conserva tot l'historial.
 ## Calendari i registre ràpid
 
 1. Selecciona **ploma** — el selector llista **totes les plomes visibles** del tractament amb el seu número i estat (`#1 · 1 mg · Acabada`, `#2 · 0,5 mg`), per defecte l'activa —, **mode** (dosi estàndard / clics) i **valor**.
-2. Toca qualsevol dia buit → es crea una administració **independent** amb el
-   valor seleccionat en aquell moment.
+2. Toca qualsevol dia buit → es demana **confirmació explícita** (*«Registrar
+   15 clics el 08/11/2026? …»*, amb dosi, data i ploma) i, en acceptar, es crea
+   una administració **independent** amb el valor seleccionat en aquell moment.
+   Fins que no es confirma **no es desa ni es descompta res**.
 3. Canvia el selector (p. ex. de 15 a 30 clics) i toca un altre dia → el registre
    nou és de 30 i **els anteriors continuen sent de 15**.
 4. Tocar un dia ja registrat obre la fitxa: *Administrat / Equivalent calculat /
@@ -594,7 +598,7 @@ El calendari té dues eines separades (selector a dalt):
 
 | Mode | Què fa | Què toca |
 |---|---|---|
-| **Registre** | tocar un dia buit crea una **administració real** amb el valor seleccionat | saldo real de la ploma |
+| **Registre** | tocar un dia buit demana **confirmació** (dosi · data · ploma) i després crea una **administració real** amb el valor seleccionat | saldo real de la ploma |
 | **Pla** | tocar un dia hi posa una **dosi prevista** (entrada `plans`) | res del passat |
 
 **Pla (dissenyar el calendari segons les plomes):**
@@ -663,24 +667,35 @@ espai al final de la vista per no tapar res i els avisos hi pugen a sobre:
   **Planificació** (interval, dates, generar, abast d'aplicació i la pista de
   les eines) es queda a dalt, on sempre ha sigut.
 
-#### Continuació automàtica (switch per defecte activat)
+#### Continuació automàtica (switch per defecte **desactivat**)
 
-**La dosi registrada mana.** En registrar una dosi (des del pla o des del
-registre):
+Registrar una administració **mai reescriu el pla**: el registre, l'enllaç i
+l'extensió són tres passos separats.
 
-1. **Re-nivella les propostes**: totes les propostes pendents d'aquella ploma
-   des de la data del registre passen a la dosi registrada (tant si la poses
-   més alta com si la poses més baixa), sense editar-les una a una.
-2. **Continua el pla** fins tenir **4 dates previstes al davant** amb la mateixa
-   dosi i el mateix interval. L'àncora és l'última data del disseny; si encara
-   no hi ha cap pla, el pla **neix de la data registrada**. No ocupa dies amb
-   administracions reals ni repeteix dates ja proposades.
-3. Tanca la proposta d'aquella data si n'hi havia.
+1. **Enllaç**: la proposta d'aquesta data i ploma queda tancada (`administered`)
+   **encara que la dosi registrada no coincideixi amb la prevista**: la
+   proposta conserva la dosi *prescrita* i l'administració, la *real*.
+2. **Extensió** (només amb consentiment): amb el switch *«Continua la dosi les
+   setmanes següents»* activat, s'afegeixen dates **futures** noves fins tenir
+   **4 dates previstes al davant**, amb la dosi i l'interval del **disseny**
+   (mai amb la dosi que es va punxar, ni inferint increment). L'àncora és
+   l'última data del pla i **mai no es genera una data passada**: si el pla és
+   antic, el primer tràfec és la pròxima data ≥ avui.
+3. **Re-nivellació**: **no existeix** en registrar. Canviar les propostes ja
+   escrites només passa per edicions explícites amb previsualització (editor de
+   fases, eina Pinta, editor de la data prevista o l'opció «actualitzar les
+   futures» en editar una dosi real).
 
-S'atura quan: `treatment.autoPlan` és `false` (switch *«Continua la dosi les
-setmanes següents»* al planner) · la ploma de referència ja no és activa · la
-ploma no admet més dosis (llavors toca `Crea la ploma següent`) · ja hi ha prou
-dates futures proposades.
+El consentiment és explícit i per defecte **fora**: `autoPlanConsent` (`false`
+també als tractaments creats abans del canvi, perquè l'interruptor antic estava
+sempre encès i ningú el va activar a propòsit). El servidor en deriva
+`autoPlan` a cada pujada, així que un client vell no pot reactivar-la.
+
+S'atura també quan: la ploma ja no és activa · la ploma no admet més dosis
+(llavors toca `Crea la ploma següent`) · ja hi ha prou dates futures · hi ha
+una data ocupada (administració real o proposta, **en qualsevol estat**: les
+omeses i cancel·lades segueixen reservant la seva data) · la ploma no arriba
+a cobrir-ne més.
 
 Mai toca registres reals (i `Desfés` del registre restaura el pla tal com estava).
 
@@ -839,7 +854,11 @@ sobrant        = saldo % dosiPrevista
 11. nova ploma mantenint l'anterior → 12. finalitzar tractament i crear-ne un
 segon **sense perdre cap dada** → 13. export/import conserva la integritat.
 
-`e2e/smoke.mjs` fa el mateix flux a través de la interfície real (mòbil 390×844),
+`e2e/smoke.mjs` fa el mateix flux a través de la interfície real (mòbil 390×844)
+i verifica que **el document mai supera l'ample de pantalla**: si desborda,
+el navegador mòbil eixampla el *layout viewport* i el peu dels diàlegs (els
+botons) queda fora de l'àrea visible — per això `#app-root` retalla
+l'horitzontal i les etiquetes de les targetes no poden desbordar.
 `e2e/pens.mjs` verifica el sistema de plomes (capacitat en clics, fitxa i
 metadades, ploma ja començada, **esborrar movent les dades**, paperera i
 **restaurar**, presets de dosi, avís i xip d'injeccions partides) i la
@@ -850,9 +869,11 @@ una data prevista i persistència) i `e2e/backup.mjs` comprova exportació,
 validació d'importació i confirmació de substitució.
 
 `test/plan.test.mjs` cobreix a més: repartició de dates del pla, detecció de
-ploma insuficient, càlcul de cobertura, enllaç pla ↔ administració, suggeriment
-de ploma següent, **continuació automàtica**, **propagació de canvis a les
-dosis futures** i migració v1 → v2.
+ploma insuficient, càlcul de cobertura, enllaç pla ↔ administració **fins i
+tot amb discrepància de dosi**, suggeriment de ploma següent,
+**continuació automàtica només amb consentiment** (i que registrar **no
+reescriu** cap proposta futura ni en inventa de noves), **mai dates passades**,
+**propagació de canvis a les dosis futures** i migració v1 → v2.
 
 `test/pens.test.mjs` cobreix el sistema de plomes: derivació de clics per
 dosi, migració **doses → clics**, consum prèvi, resum de dosis, **esborrar
@@ -860,8 +881,17 @@ movent/esborrant les dades** (tomba, numeració congelada, promoció de l'activa
 **restaurar**, presets i validació de l'esquema amb plomes esborrades.
 
 `e2e/planner.mjs` verifica el calendari de pla de punta a punta: generar,
-tocar dies, registrar una data prevista, **allargament automàtic del pla**,
+tocar dies, registrar una data prevista, **interruptor de continuació per
+defecte desactivat** i **allargament automàtic amb consentiment explícit**,
 **edició d'una dosi aplicada a les futures** i persistència.
+
+`e2e/planestats.mjs` verifica a més que **registrar una dosi diferent de la
+prevista deixa intactes les propostes futures** (P0) i que el registre demana
+confirmació abans de crear cap administració real.
+
+Les re-renderitzacions de fons (p. ex. l'avis de sincronització, amb debounce
+de 900 ms) **no esborren un formulari a mig omplir**: `render()` les salta si
+hi ha un camp enfocat (`js/app.js`).
 
 ---
 
