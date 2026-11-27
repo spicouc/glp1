@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Pre-commit: bloqueja secrets i artefactes abans de poder-los pujar.
+# (És la segona protecció: la primera és el .gitignore.)
+set -euo pipefail
+
+# .git/hooks no es versiona → aquest hook viu a .githooks/ i s'activa amb
+#   git config core.hooksPath .githooks
+FORBIDDEN='(^|/)\.env$|(^|/)\.env\.[^/]+$|\.pem$|id_rsa|\.p12$|\.pfx$|(^|/)[^/]*\.log$|__pycache__/|\.pyc$|(^|/)node_modules/'
+
+staged=$(git diff --cached --name-only)
+if printf '%s\n' "$staged" | grep -E "$FORBIDDEN" >/dev/null 2>&1; then
+  echo "✗ Bloquejat: a l'índex hi ha fitxers sensibles o d'artefactes:" >&2
+  printf '%s\n' "$staged" | grep -E "$FORBIDDEN" | sed 's/^/    /' >&2
+  echo "  (el .env i els logs mai no es pugen)" >&2
+  exit 1
+fi
