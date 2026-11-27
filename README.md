@@ -735,6 +735,8 @@ Regles de protecció del pla:
   hi toquen (abans sí): primer cal tornar-les al pla des de la fitxa del dia.
 - Reservar una data ocupada (registre real o altra proposta) en el recàlcul de
   cadència es compta com a **conflicte** i es deixa la data tal com estava.
+- **Solapament de fases**: dues fases amb tram explícit no es poden creuar
+  (error de validació); una fase **oberta** acaba quan comença la següent.
 
 Els plans també generen alerta informativa si no caben a la ploma
 (`plan-pen-short`) i apareixen a l'Historial amb el filtre `Pla`.

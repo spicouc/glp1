@@ -288,6 +288,7 @@ const M = {
   'treatment.phaseIntervalConflicts': 'Dates recalculades: {n} mogudes, {c} conservades perquè hi havia alguna cosa ocupada.',
   'treatment.phaseCancelAsk': 'La fase queda cancel·lada. Cancel·lar també les {n} propostes pendents del seu tram?',
   'treatment.phaseCancelReason': 'Fase cancel·lada',
+  'treatment.phaseOverlap': 'Aquest tram es solapa amb una fase existent ({from} → {to}). Cadascuna pot tenir la seva fase, però els trams explícits no es poden creuar.',
   'treatment.phaseCancelled': 'Fase cancel·lada: {n} propostes del tram també cancel·lades.',
   'treatment.phaseAdded': 'Fase afegida',
   'treatment.phaseUpdated': 'Fase actualitzada',

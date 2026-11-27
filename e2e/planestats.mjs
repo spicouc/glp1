@@ -352,6 +352,22 @@ try {
   const phaseRow2 = await page.locator('.schedules__row').filter({ hasText: '01/12/2026' }).first().innerText().catch(() => '');
   if (!/14 dies/.test(phaseRow2)) problems.push('La fila no reflecteix la nova cadència: ' + phaseRow2.replace(/\n/g, ' '));
   else log('✓ la fila mostra la cadència nova:', phaseRow2.replace(/\n/g, ' | ').slice(0, 110));
+  // --- validació: dues fases amb tram explícit no es poden solapar (issue #3)
+  at('solapament de fases');
+  const inline = page.locator('.form--inline');
+  await inline.locator('select[name="mode"]').selectOption('standard');
+  await inline.locator('input[name="startDate"]').fill('2026-12-10');
+  await inline.locator('input[name="value"]').fill('5');
+  await inline.locator('input[name="durationDays"]').fill('7');
+  await inline.getByRole('button', { name: 'Desa' }).click();
+  await page.waitForTimeout(300);
+  const overlapErr = (await inline.locator('.form__errors').innerText().catch(() => '')).replace(/\n/g, ' ');
+  if (!/solapa/i.test(overlapErr)) {
+    problems.push('No es valida el solapament de fases: ' + (overlapErr || '(sense error)'));
+  } else {
+    log('✓ solapament de fases → error de validació:', overlapErr.slice(0, 130));
+  }
+
 } catch (err) {
   problems.push(`pas «${step}» → ` + err.message.split('\n').slice(0, 3).join(' ⏎ '));
   await shot('99-error').catch(() => {});

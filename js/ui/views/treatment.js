@@ -452,6 +452,19 @@ function scheduleForm(patient, treatment, { existing = null, onClose = null } = 
     if (durationDays != null && (!Number.isInteger(durationDays) || durationDays < 1)) {
       return errorSlot.replaceChildren(formError(t('form.integer')));
     }
+    // Solapament de fases: dues amb tram EXPLÍCIT que es creuen deixen
+    // `scheduleAt` ambigu (resol per data d'inici). Una fase OBERTA no compta:
+    // per definició acaba quan comença la següent.
+    const overlap = sortedSchedules(treatment).find((s) => {
+      if (phase && s.id === phase.id) return false;
+      if (!s.endDate || !endDate) return false;
+      return cmpDates(s.startDate, endDate) <= 0 && cmpDates(startDate, s.endDate) <= 0;
+    });
+    if (overlap) {
+      return errorSlot.replaceChildren(formError(t('treatment.phaseOverlap', {
+        from: fmtShort(overlap.startDate), to: fmtShort(overlap.endDate),
+      })));
+    }
     const status = statusSel.value;
     const computed = registerAmount({ mode: modeSel.value, value, pen, drug });
     if (!computed.valid) return errorSlot.replaceChildren(formError(t('cal.quickInvalid')));
