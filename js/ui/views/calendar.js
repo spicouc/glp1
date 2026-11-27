@@ -27,7 +27,7 @@ import {
   scheduleAt,
   penById,
   plansByDate,
-  plansForPen,
+  plansOnDate,
   registerAmount,
   tombstonePlan,
   restorePlan,
@@ -420,7 +420,10 @@ export function renderCalendar(patient) {
         const plannerPen = penById(treatment, p.penId);
         const computed = registerAmount({ mode: p.mode, value: Number(p.value), pen: plannerPen, drug });
         if (!computed.valid) { toast(t('plan.invalid'), { tone: 'warn' }); return; }
-        if (plansForPen(treatment, p.penId).some((e) => e.date === iso)) {
+        // Una dosi prevista per DATA, de qualsevol ploma (issue #3): abans la
+        // comprovació era per ploma i es podien crear dues propostes el mateix
+        // dia amb plomes diferents.
+        if (plansOnDate(treatment, iso).length) {
           toast(t('plan.alreadyThatDay'), { tone: 'warn' });
           return;
         }
@@ -449,13 +452,18 @@ export function renderCalendar(patient) {
       };
 
       const dayEntries = (plans || []).filter((e) => e.penId === p.penId);
-      const locked = dayEntries.find((e) => e.registeredAdminId);
+      // Propostes omeses o cancel·lades: PROTEGIDES. No es poden ni pintar ni
+      // treure d'un sol toc (abans s'hi deien igual) → primer s'han de tornar
+      // al pla des de la fitxa del dia.
+      const editable = dayEntries.filter((e) => !['omitted', 'cancelled'].includes(e.status || 'planned'));
+      const locked = editable.find((e) => e.registeredAdminId);
 
       // --- Eina ESBORRA: treu la proposta d'aquest dia (amb Desfés) ---
       if (tool === 'erase') {
         if (!dayEntries.length) { toast(t('plan.eraseNone'), { tone: 'warn' }); return; }
+        if (!editable.length) { toast(t('plan.inactiveProtected'), { tone: 'warn' }); return; }
         if (locked) { toast(t('plan.linkedLocked'), { tone: 'warn' }); return; }
-        const removed = dayEntries.map((e) => ({ ...e }));
+        const removed = editable.map((e) => ({ ...e }));
         const ids = new Set(removed.map((x) => x.id));
         for (const e of removed) tombstonePlan(treatment, e.id);
         persist(patient);
@@ -476,13 +484,14 @@ export function renderCalendar(patient) {
       // --- Eina PINTA: hi posa o hi canvia la dosi triada al planner ---
       if (tool === 'paint') {
         if (dayEntries.length) {
+          if (!editable.length) { toast(t('plan.inactiveProtected'), { tone: 'warn' }); return; }
           if (locked) { toast(t('plan.linkedLocked'), { tone: 'warn' }); return; }
           if (!planValid()) { toast(t('plan.invalid'), { tone: 'warn' }); return; }
           const plannerPen = penById(treatment, p.penId);
           const computed = registerAmount({ mode: p.mode, value: Number(p.value), pen: plannerPen, drug });
           if (!computed.valid) { toast(t('plan.invalid'), { tone: 'warn' }); return; }
-          const before = dayEntries.map((e) => ({ ...e }));
-          for (const e of dayEntries) {
+          const before = editable.map((e) => ({ ...e }));
+          for (const e of editable) {
             e.mode = p.mode;
             e.value = p.mode === 'standard' ? Number(p.value) : Math.round(Number(p.value));
             e.amount = computed.amount;

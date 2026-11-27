@@ -1242,6 +1242,7 @@ export function propagatePlanChanges(treatment, {
   value, mode, amount, unit, mg,
   shiftDays = 0,
 } = {}) {
+  const drug = treatmentDrug(treatment);
   const targets = pendingPlans(treatment).filter((p) => {
     if (Array.isArray(ids)) return ids.includes(p.id); // abast explícit
     if (p.id === excludeId) return false;
@@ -1254,11 +1255,77 @@ export function propagatePlanChanges(treatment, {
     if (value !== undefined || amount !== undefined) {
       if (mode !== undefined) p.mode = mode;
       if (value !== undefined) p.value = value;
-      if (amount !== undefined) p.amount = amount;
-      if (unit !== undefined) p.unit = unit;
-      if (mg !== undefined) p.mg = mg;
+      // La quantitat es recalcula amb la PLOMA DE CADA proposta: la mateixa
+      // dosi en mg no són els mateixos clics en una ploma de 5 mg i en una de
+      // 10 mg (abans hi arribava el valor calculat amb la ploma activa, i una
+      // proposta d'una altra ploma quedava mal convertida).
+      const pen = penById(treatment, p.penId);
+      const perPen = pen && value !== undefined
+        ? registerAmount({ mode: p.mode, value: Number(value), pen, drug })
+        : null;
+      if (perPen && perPen.valid && perPen.amount) {
+        p.amount = perPen.amount;
+        p.unit = perPen.unit;
+        p.mg = perPen.mg;
+      } else if (amount !== undefined) {
+        p.amount = amount;
+        if (unit !== undefined) p.unit = unit;
+        if (mg !== undefined) p.mg = mg;
+      }
     }
     if (shiftDays) p.date = addDays(p.date, shiftDays);
   }
   return targets.length;
+}
+
+/**
+ * Recalcula les dates de les propostes pendents dins d'un tram segons una
+ * cadència NOVA (canvi d'interval d'una fase).
+ *
+ *  - només propostes **pendents**: registres reals i propostes ja enllaçades
+ *    no es mouen mai;
+ *  - s'ancora a l'inici de la fase: `data_i = start + i × interval`;
+ *  - una data que ja sigui ocupada (registre real o proposta de fora de
+ *    l'abast) **no es toca**: es conserva l'anterior i es compta com a
+ *    conflicte, perquè l'usuari ho vegi.
+ *
+ * Retorna `{ moved, conflicts }`.
+ */
+export function resequencePlanDates(treatment, { fromDate = null, toDate = null, start, interval } = {}) {
+  const step = Math.max(1, Math.round(Number(interval) || 7));
+  if (!treatment || !isValidPlanDate(start)) return { moved: 0, conflicts: 0 };
+
+  const targets = pendingPlans(treatment)
+    .filter((p) => (!fromDate || cmpDates(p.date, fromDate) >= 0)
+      && (!toDate || cmpDates(p.date, toDate) <= 0))
+    .sort((a, b) => cmpDates(a.date, b.date));
+  if (!targets.length) return { moved: 0, conflicts: 0 };
+
+  const inside = new Set(targets.map((p) => p.id));
+  const blocked = new Set([
+    ...allAdministrations(treatment).map((a) => a.date),
+    ...allPlans(treatment).filter((p) => !inside.has(p.id)).map((p) => p.date),
+  ]);
+
+  let moved = 0;
+  let conflicts = 0;
+  targets.forEach((p, i) => {
+    const next = addDays(start, i * step);
+    if (next === p.date) return;
+    if (blocked.has(next)) { conflicts += 1; return; } // ja hi ha algú: es conserva
+    if (toDate && cmpDates(next, toDate) > 0) { conflicts += 1; return; } // sortiria del tram
+    blocked.add(next);
+    p.date = next;
+    moved += 1;
+  });
+  return { moved, conflicts };
+}
+
+/**
+ * Totes les propostes d'una data, de QUALSEVOL ploma: la regla és **una dosi
+ * prevista per esdeveniment** (abans es comprovava per ploma i es podien crear
+ * dues propostes el mateix dia amb plomes diferents).
+ */
+export function plansOnDate(treatment, date) {
+  return allPlans(treatment).filter((p) => p.date === date);
 }

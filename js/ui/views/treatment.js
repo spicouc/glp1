@@ -17,6 +17,8 @@ import {
   visibleTreatments,
   registerAmount,
   propagatePlanChanges,
+  resequencePlanDates,
+  cancelPlan,
   plannedEntries,
   treatmentCosts,
   visiblePens,
@@ -456,6 +458,11 @@ function scheduleForm(patient, treatment, { existing = null, onClose = null } = 
 
     const doseChanged = !phase || phase.value !== value || phase.mode !== modeSel.value;
     const rangeChanged = !phase || phase.startDate !== startDate || phase.endDate !== endDate;
+    // Cadència i estat de la fase: abans NO es preguntava per res si canviaven
+    // sols, i les propostes del tram quedaven amb dates obsoletes o actives
+    // sota una fase cancel·lada (issue #3).
+    const intervalChanged = Boolean(phase) && Number(phase.intervalDays) !== interval;
+    const cancelPhase = Boolean(phase && phase.status !== 'cancelled' && status === 'cancelled');
 
     if (phase) {
       Object.assign(phase, {
@@ -473,32 +480,58 @@ function scheduleForm(patient, treatment, { existing = null, onClose = null } = 
     toast(phase ? t('treatment.phaseUpdated') : t('treatment.phaseAdded'), { tone: 'ok' });
     if (onClose) onClose();
 
-    // El canvi d'una fase futura es pot propagar a les seves propostes (mai a
-    // registres reals) i sempre amb confirmació explícita.
+    // Els canvis d'una fase futura es poden aplicar a les seves propostes (mai
+    // a registres reals) i sempre amb confirmació explícita; cada canvi amb el
+    // seu missatge i en cadena, perquè es puguin demanar dos d'un cop.
     const targets = plannedEntries(treatment).filter((p) => {
       if (cmpDates(p.date, startDate) < 0) return false;
       if (endDate && cmpDates(p.date, endDate) > 0) return false;
       return true;
     });
-    if ((doseChanged || rangeChanged) && targets.length) {
-      confirmDialog(t('treatment.phaseApplyAsk', { n: targets.length }), {
-        danger: false, okLabel: t('plan.applyToPlan'),
-      }).then((ok) => {
-        if (!ok) return;
-        const n = propagatePlanChanges(treatment, {
-          fromDate: startDate,
-          toDate: endDate,
-          value: modeSel.value === 'standard' ? value : Math.round(value),
-          mode: modeSel.value,
-          amount: computed.amount,
-          unit: computed.unit,
-          mg: computed.mg,
-        });
+    const steps = [];
+    if (cancelPhase && targets.length) {
+      steps.push([t('treatment.phaseCancelAsk', { n: targets.length }), () => {
+        for (const p of targets) cancelPlan(treatment, p.id, t('treatment.phaseCancelReason'));
         persist(patient);
         update('plan-propagated');
-        toast(t('treatment.phaseApplied', { n }), { tone: 'ok' });
-      });
+        toast(t('treatment.phaseCancelled', { n: targets.length }), { tone: 'ok' });
+      }]);
+    } else {
+      if ((doseChanged || rangeChanged) && targets.length) {
+        steps.push([t('treatment.phaseApplyAsk', { n: targets.length }), () => {
+          const n = propagatePlanChanges(treatment, {
+            fromDate: startDate,
+            toDate: endDate,
+            value: modeSel.value === 'standard' ? value : Math.round(value),
+            mode: modeSel.value,
+            amount: computed.amount,
+            unit: computed.unit,
+            mg: computed.mg,
+          });
+          persist(patient);
+          update('plan-propagated');
+          toast(t('treatment.phaseApplied', { n }), { tone: 'ok' });
+        }]);
+      }
+      if (intervalChanged && targets.length) {
+        steps.push([t('treatment.phaseIntervalAsk', { n: targets.length, interval }), () => {
+          const { moved, conflicts } = resequencePlanDates(treatment, {
+            fromDate: startDate, toDate: endDate, start: startDate, interval,
+          });
+          persist(patient);
+          update('plan-propagated');
+          toast(conflicts
+            ? t('treatment.phaseIntervalConflicts', { n: moved, c: conflicts })
+            : t('treatment.phaseIntervalApplied', { n: moved }), { tone: conflicts ? 'warn' : 'ok' });
+        }]);
+      }
     }
+    (async () => {
+      for (const [message, run] of steps) {
+        const ok = await confirmDialog(message, { danger: false, okLabel: t('plan.applyToPlan') });
+        if (ok) run();
+      }
+    })();
   });
 
   return form;

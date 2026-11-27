@@ -178,6 +178,29 @@ try {
   else log('✓ cancel·lada → es veu i conserva el motiu');
   await shot('82-cancel-lada');
 
+  // --- protecció: la proposta cancel·lada no es pot pintar ni treure (issue #3)
+  at('protecció inactiva');
+  const toolsBar = page.locator('.plantools');
+  if (await toolsBar.count()) {
+    await toolsBar.getByRole('button', { name: /Pinta/ }).first().click();
+    await page.waitForTimeout(150);
+    await page.locator('.day[aria-label^="9 de novembre de 2026"]').click();
+    await page.waitForTimeout(300);
+    const protToast = (await page.locator('#app-toast').innerText().catch(() => '')).replace(/\n/g, ' ');
+    const stillCancelled = await ariaOf('9 de novembre de 2026');
+    if (!/fora del pla/.test(protToast)) {
+      problems.push('La proposta cancel·lada no queda protegida en pintar: ' + (protToast || '(sense avís)'));
+    } else if (!/Cancel·lada/.test(stillCancelled || '')) {
+      problems.push('La pintura ha tocat la proposta cancel·lada: ' + stillCancelled);
+    } else {
+      log('✓ pintar sobre una proposta cancel·lada → protegida i intacta');
+    }
+    await toolsBar.getByRole('button', { name: /Consulta/ }).first().click().catch(() => {});
+    await page.waitForTimeout(150);
+  } else {
+    problems.push('No es veu la barra d\'eines del planificador (plantools)');
+  }
+
   // --- registre real intacte ---------------------------------------------
   at('registre real');
   await page.locator('.segmented--calendar').getByRole('button', { name: 'Registre', exact: true }).click();
@@ -260,8 +283,18 @@ try {
     problems.push('La durada no ha recalculat la data de fi al diàleg: ' + endInDialog);
   }
   await page.locator('.dialog').getByRole('button', { name: 'Desa', exact: true }).click();
-  await page.waitForTimeout(300);
+  // el canvi de tram demana aplicar-lo al pla (confirmació explícita): si no
+  // es confirma, el diàleg es queda obert i bloqueja tot el que ve després
+  const applyDur = page.locator('.dialog').getByRole('button', { name: /Aplicar al pla/ });
+  await applyDur.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
+  if (await applyDur.count()) {
+    await applyDur.click();
+    log('✓ el canvi de durada demana aplicar-lo al pla');
+  } else {
+    problems.push('No es demana aplicar el canvi de durada al pla');
+  }
   await page.waitForSelector('.dialog', { state: 'detached', timeout: 5000 }).catch(() => {});
+  await page.waitForTimeout(300);
   // es sondeja: la fila es re-renderitza amb el nou tram
   const readPhaseRow = () => page.locator('.schedules__row').filter({ hasText: '01/12/2026' }).first()
     .innerText().catch(() => '');
@@ -290,6 +323,35 @@ try {
       + ` | diàlegs oberts: ${open} → ${dlgInfo}` + ' | desat: ' + stored);
   } else log('✓ editar la durada recalcula la data de fi');
   await shot('84-fase-editada');
+
+  // --- canvi de cadència: demana recalcular les dates del tram (issue #3) ---
+  at('interval de fase');
+  await page.locator('.schedules__row').filter({ hasText: '01/12/2026' }).first()
+    .getByRole('button', { name: 'Edita la fase' }).click();
+  await page.waitForSelector('.dialog', { timeout: 5000 });
+  await page.locator('.dialog input[name="intervalDays"]').fill('14');
+  await page.locator('.dialog').getByRole('button', { name: 'Desa', exact: true }).click();
+  const applyInt = page.locator('.dialog').getByRole('button', { name: /Aplicar al pla/ });
+  await applyInt.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
+  const intervalAsk = (await page.locator('.dialog').first().innerText().catch(() => '')).replace(/\n/g, ' ');
+  if (!/cada 14 dies/i.test(intervalAsk) || !/cadència/i.test(intervalAsk)) {
+    problems.push('El canvi d\'interval no demana recalcular les dates: ' + intervalAsk.slice(0, 220));
+  } else {
+    log('✓ canvi d\'interval → demana recalcular les dates amb la nova cadència');
+  }
+  if (await applyInt.count()) await applyInt.click();
+  else problems.push('No s\'obre cap confirmació per al canvi d\'interval');
+  await page.waitForSelector('.dialog', { state: 'detached', timeout: 5000 }).catch(() => {});
+  await page.waitForTimeout(400);
+  const intervalToast = (await page.locator('#app-toast').innerText().catch(() => '')).replace(/\n/g, ' ');
+  if (!/Dates recalculades/.test(intervalToast)) {
+    problems.push('No s\'ha confirmat el recàlcul de dates: ' + (intervalToast || '(sense avís)'));
+  } else {
+    log('✓ dates recalculades:', intervalToast.slice(0, 110));
+  }
+  const phaseRow2 = await page.locator('.schedules__row').filter({ hasText: '01/12/2026' }).first().innerText().catch(() => '');
+  if (!/14 dies/.test(phaseRow2)) problems.push('La fila no reflecteix la nova cadència: ' + phaseRow2.replace(/\n/g, ' '));
+  else log('✓ la fila mostra la cadència nova:', phaseRow2.replace(/\n/g, ' | ').slice(0, 110));
 } catch (err) {
   problems.push(`pas «${step}» → ` + err.message.split('\n').slice(0, 3).join(' ⏎ '));
   await shot('99-error').catch(() => {});

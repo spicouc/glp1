@@ -19,6 +19,8 @@ import {
   ensurePlanContinuation,
   applyRegisteredDose,
   propagatePlanChanges,
+  resequencePlanDates,
+  plansOnDate,
   clearPendingPlan,
   clearAdministrations,
   selectPlanTargets,
@@ -523,4 +525,98 @@ test('la propagació només toca entrades pendents (mai les registrades ni els r
   assert.equal(n, 2, 'només les dues futures pendents (04/12 i 11/12)');
   assert.equal(treatment.plans[1].amount, 15, 'l\'entrada ja registrada no canvia');
   assert.equal(treatment.administrations.find((a) => a.id === adm.id).amount, 15, 'el registre real es queda com estava');
+});
+
+/* ---------- issue #3: dues plomes, cadència i una dosi per data ---------- */
+
+test('propagar una dosi en mg la recalcula amb la presentació de CADA ploma', () => {
+  const { treatment, pen } = base(); // ploma de 10 mg → mgPerClick = 10/60
+  const other = createPen({ presentationMg: 5, startDate: '2026-11-01', initialCapacity: 240, capacityUnit: 'clicks' });
+  treatment.pens.push(other);
+
+  treatment.plans = [
+    createPlanEntry({ date: '2026-11-27', penId: pen.id, mode: 'standard', value: 2.5, amount: 15, unit: 'clicks', mg: 2.5 }),
+    createPlanEntry({ date: '2026-12-04', penId: other.id, mode: 'standard', value: 2.5, amount: 30, unit: 'clicks', mg: 2.5 }),
+  ];
+
+  const n = propagatePlanChanges(treatment, {
+    fromDate: '2026-11-01', value: 5, mode: 'standard', amount: 60, unit: 'clicks', mg: 5,
+  });
+  assert.equal(n, 2);
+  const forPen = (id) => treatment.plans.find((x) => x.penId === id);
+  // 10 mg → 5 mg = 30 clics · 5 mg → 5 mg = 60 clics. Abans totes rebien el
+  // valor calculat amb la ploma activa (30) i la de 5 mg quedava mal convertida.
+  assert.equal(forPen(pen.id).amount, 30, 'ploma de 10 mg');
+  assert.equal(forPen(other.id).amount, 60, 'ploma de 5 mg');
+  assert.ok(treatment.plans.every((x) => x.unit === 'clicks' && x.mg === 5), 'mateixa dosi en mg per a totes');
+});
+
+test('resequencePlanDates: cadència nova dins de la fase, sense tocar res més', () => {
+  const { treatment, pen } = base();
+  treatment.plans = ['2026-12-06', '2026-12-13', '2026-12-20', '2026-12-27'].map((date) =>
+    createPlanEntry({ date, penId: pen.id, mode: 'clicks', value: 15, amount: 15, unit: 'clicks', mg: 2.5 }));
+  treatment.plans[1].status = 'omitted';        // fora dels pendents
+  treatment.plans[2].registeredAdminId = 'adm_x'; // ja feta
+
+  const res = resequencePlanDates(treatment, {
+    fromDate: '2026-12-01', toDate: '2026-12-31', start: '2026-12-01', interval: 14,
+  });
+  assert.equal(res.moved, 2, 'les dues pendents es recalculen');
+  assert.equal(res.conflicts, 0);
+  assert.equal(treatment.plans[0].date, '2026-12-01', 'ancorada a l\'inici de la fase');
+  assert.equal(treatment.plans[3].date, '2026-12-15', 'segona de la nova cadència');
+  assert.equal(treatment.plans[1].date, '2026-12-13', 'l\'omesa no es mou');
+  assert.equal(treatment.plans[2].date, '2026-12-20', 'la ja registrada no es mou');
+  assert.equal(treatment.plans[1].status, 'omitted', 'l\'estat es conserva');
+});
+
+test('resequencePlanDates: una data ocupada es conserva i es compte com a conflicte', () => {
+  const { treatment, pen } = base();
+  treatment.plans = ['2026-12-06', '2026-12-13'].map((date) =>
+    createPlanEntry({ date, penId: pen.id, mode: 'clicks', value: 15, amount: 15, unit: 'clicks', mg: 2.5 }));
+  treatment.administrations.push(createAdministration({
+    date: '2026-12-15', penId: pen.id, mode: 'clicks', value: 15, amount: 15, unit: 'clicks',
+  }));
+
+  const res = resequencePlanDates(treatment, {
+    fromDate: '2026-12-01', toDate: '2026-12-31', start: '2026-12-01', interval: 14,
+  });
+  assert.equal(res.moved, 1, 'la primera es recalcula (01/12)');
+  assert.equal(res.conflicts, 1, 'la segona voldria 15/12, on ja hi ha un registre');
+  assert.equal(treatment.plans[0].date, '2026-12-01');
+  assert.equal(treatment.plans[1].date, '2026-12-13', 'conserva la data anterior');
+  assert.equal(treatment.administrations.length, 3, 'cap registre real es toca (2 de base + 1)');
+});
+
+test('plansOnDate: una dosi prevista per data, de qualsevol ploma', () => {
+  const { treatment, pen } = base();
+  const other = createPen({ presentationMg: 5, startDate: '2026-11-01', initialCapacity: 240, capacityUnit: 'clicks' });
+  treatment.pens.push(other);
+
+  treatment.plans = [createPlanEntry({
+    date: '2026-12-06', penId: pen.id, mode: 'clicks', value: 15, amount: 15, unit: 'clicks', mg: 2.5,
+  })];
+  assert.equal(plansOnDate(treatment, '2026-12-06').length, 1);
+  assert.equal(plansOnDate(treatment, '2026-12-13').length, 0);
+
+  // dues plomes el mateix dia: la detecció és transversal (la UI ja no en crea)
+  treatment.plans.push(createPlanEntry({
+    date: '2026-12-06', penId: other.id, mode: 'clicks', value: 15, amount: 15, unit: 'clicks', mg: 2.5,
+  }));
+  assert.equal(plansOnDate(treatment, '2026-12-06').length, 2, 'les detecta totes');
+  const pens = new Set(plansOnDate(treatment, '2026-12-06').map((x) => x.penId));
+  assert.deepEqual([...pens].sort(), [pen.id, other.id].sort());
+});
+
+test('resequencePlanDates: no treu cap proposta del tram de la fase', () => {
+  const { treatment, pen } = base();
+  treatment.plans = ['2026-12-06', '2026-12-13'].map((date) =>
+    createPlanEntry({ date, penId: pen.id, mode: 'clicks', value: 15, amount: 15, unit: 'clicks', mg: 2.5 }));
+
+  const res = resequencePlanDates(treatment, {
+    fromDate: '2026-12-01', toDate: '2026-12-14', start: '2026-12-01', interval: 14,
+  });
+  assert.equal(res.moved, 1, 'la primera passa a 01/12 (dins del tram)');
+  assert.equal(res.conflicts, 1, 'la segona voldria 15/12, fora de la fase');
+  assert.equal(treatment.plans[1].date, '2026-12-13', 'es conserva la data');
 });

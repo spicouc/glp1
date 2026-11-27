@@ -77,7 +77,7 @@ capa `js/data/repository.js` ja està aïllada específicament per a això.
 npm run test:api       # tests de l'API (Python): auth, merge, rols, tokens, catàleg, tombes,
                        #   duplicats, saldos, auditoria, purga, enllaç amb discrepància (28)
 npm test               # tests unitaris: model, càlcul, pla, plomes, sync, catàleg,
-                       #   migració v3, estats, fases, inventari (102)
+                       #   migració v3, estats, fases, inventari (107)
 npm run e2e            # proves de navegador: arrenca la PILA AÏLLADA (:8098)
                        #   smoke.mjs   flux complet per la UI
                        #   pens.mjs    plomes: capacitat en clics, esborrar/restaurar,
@@ -717,9 +717,24 @@ Mai toca registres reals (i `Desfés` del registre restaura el pla tal com estav
 |---|---|
 | **Editant una data prevista** | abast per defecte **`Aquesta i les futures (N)`**: la dosi modificada mana sobre les següents (amb confirmació prèvia; `Cancel·la` = només aquesta data, sense perdre l'edició). També pots triar **`Aquesta fase`** (només el tram de pauta que conté la data) o `Només aquesta data`. Si es mou la data, les posteriors **es desplacen conservant l'interval**. |
 | **Editant una administració real** | després de desar, si hi ha dosis futures pendents d'aquella ploma pregunta *«Vols actualitzar també les N dosis futures del pla?»*. |
+| **Editant la dosiació d'una fase** | pregunta per aplicar-la a les propostes del tram; la quantitat es **recalcula amb la presentació de CADA ploma** (la mateixa dosi en mg no són els mateixos clics en una ploma de 5 mg i en una de 10 mg). |
+| **Canviant l'interval d'una fase** | pregunta per **recalcular les dates** del tram amb la cadència nova (`data_i = inici + i × interval`), amb recompte de mogudes i conservades. |
+| **Cancel·lant una fase** | pregunta per cancel·lar també les propostes pendents del tram (amb motiu `Fase cancel·lada`). |
 
-En tots dos casos la propagació només afecta **entrades pendents** del pla:
-les ja registrades i els registres reals mai es modifiquen.
+En tots els casos la propagació només afecta **entrades pendents** del pla: les
+ja registrades, les omeses/cancel·lades i els registres reals mai es modifiquen.
+Les confirmacions van **una amb el seu missatge rere l'altra** (cadascun es pot
+confirmar o descartar per separat).
+
+Regles de protecció del pla:
+
+- **Una dosi prevista per data**: no es pot crear una proposta en una data que
+  ja en tingui cap, **de qualsevol ploma** (abans la comprovació era per ploma i
+  es podien crear dues propostes el mateix dia amb plomes diferents).
+- **Propostes omeses o cancel·lades protegides**: les eines Pinta i Esborra no
+  hi toquen (abans sí): primer cal tornar-les al pla des de la fitxa del dia.
+- Reservar una data ocupada (registre real o altra proposta) en el recàlcul de
+  cadència es compta com a **conflicte** i es deixa la data tal com estava.
 
 Els plans també generen alerta informativa si no caben a la ploma
 (`plan-pen-short`) i apareixen a l'Historial amb el filtre `Pla`.
