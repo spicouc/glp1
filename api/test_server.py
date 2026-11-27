@@ -585,6 +585,34 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(len(trts), 1, "es preserva (client vell)")
         self.assertTrue(trts[0]["deletedAt"], "continua esborrat, no torna a estar actiu")
 
+    def test_23b_pla_sense_ploma(self):
+        """Un pla prescrit en mg pot no tenir ploma; en registrar, se li assigna (issue #2)."""
+        token = self.login()
+        plan = {"id": "pln23", "date": "2026-12-01", "penId": None,
+                "mode": "standard", "value": 5, "amount": 5, "unit": "mg",
+                "mg": 5, "registeredAdminId": None, "status": "planned"}
+        doc = self._patient("p23", "2099-04-01T00:00:00Z", plans=[plan])
+        status, data = self.request("PUT", "/api/patients", {"patients": [doc]}, token=token)
+        self.assertEqual(status, 200, data)
+        t = next(p for p in data["patients"] if p["id"] == "p23")["treatments"][0]
+        saved = t["plans"][0]
+        self.assertIsNone(saved["penId"], "el servidor conserva el pla sense ploma")
+        self.assertIsNone(saved["registeredAdminId"])
+        self.assertEqual(saved["status"], "planned")
+
+        # registre real d'aquella data → s'enllaça i se li assigna la ploma
+        doc2 = json.loads(json.dumps(doc))
+        doc2["updatedAt"] = "2099-04-02T00:00:00Z"
+        doc2["treatments"][0]["administrations"] = [
+            self._admin("a23", "2026-12-01", amount=30, pen="pen_p23", key="k-23")]
+        status, data = self.request("PUT", "/api/patients", {"patients": [doc2]}, token=token)
+        self.assertEqual(status, 200, data)
+        t = next(p for p in data["patients"] if p["id"] == "p23")["treatments"][0]
+        saved = t["plans"][0]
+        self.assertEqual(saved["penId"], "pen_p23", "la ploma s'assigna en registrar")
+        self.assertEqual(saved["registeredAdminId"], "a23", "enllaçat")
+        self.assertEqual(saved["amount"], 5, "la dosi prescrita es conserva")
+
     def test_12_invalid_json_and_unknown_route(self):
         token = self.login()
         status, _ = self.request("GET", "/api/que-shou", token=token)

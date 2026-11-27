@@ -59,7 +59,11 @@ export function ensurePlanner(treatment, cal) {
   if (!cal.planner) cal.planner = {};
   const p = cal.planner;
 
-  if (!p.penId || !penById(treatment, p.penId)) p.penId = active ? active.id : null;
+  // `penId`: `undefined` encara no s'ha triat (es proposa l'activa); `null` =
+  // triat expressament «Sense ploma» (pla prescrit en mg, issue #2) i no
+  // s'hi torna a posar cap.
+  if (p.penId === undefined) p.penId = active ? active.id : null;
+  else if (p.penId && !penById(treatment, p.penId)) p.penId = active ? active.id : null;
   if (p.mode !== 'clicks') p.mode = 'standard';
   if (p.value === undefined || p.value === null || p.value === '') {
     p.value = drug ? drug.standardDosesMg[0] : '';
@@ -73,7 +77,10 @@ export function ensurePlanner(treatment, cal) {
   if (p.scope !== 'from') p.scope = 'all';
   if (p.tool !== 'paint' && p.tool !== 'erase') p.tool = 'inspect';
   if (!Number.isInteger(Number(p.count)) || Number(p.count) < 1 || !p.countTouched) {
-    p.count = Math.max(1, maxDosesFor(treatment, penById(treatment, p.penId), { mode: p.mode, value: p.value }));
+    const max = maxDosesFor(treatment, penById(treatment, p.penId), { mode: p.mode, value: p.value });
+    // Sense ploma no hi ha saldo que limiti → es proposen 4 dates (mateix
+    // criteri que la continuació); amb ploma, les que hi caben.
+    p.count = p.penId ? Math.max(1, max) : Math.max(4, Number(p.count) || 0);
   }
   return p;
 }
@@ -273,10 +280,13 @@ export function planPlanner({ patient, treatment, cal }) {
   const penSelect = h('select', {
     class: 'input',
     'aria-label': t('plan.pen'),
-    onChange: (e) => { state.penId = e.target.value; state.countTouched = false; refresh(); },
-  }, pens.map((p, i) =>
+    onChange: (e) => { state.penId = e.target.value || null; state.countTouched = false; refresh(); },
+  },
+  pens.map((p, i) =>
     h('option', { value: p.id, selected: p.id === state.penId },
-      `#${i + 1} · ${p.presentationMg ? `${formatNumber(p.presentationMg)} mg` : '—'} · ${tStatusShort(p.status)} · ${fmtShort(p.startDate)}`)));
+      `#${i + 1} · ${p.presentationMg ? `${formatNumber(p.presentationMg)} mg` : '—'} · ${tStatusShort(p.status)} · ${fmtShort(p.startDate)}`)),
+  // Pla prescrit en mg sense ploma: l'assignació ve després (issue #2)
+  h('option', { value: '', selected: !state.penId }, t('plan.noPen')));
 
   const modeGroup = h('div', { class: 'segmented', role: 'group', 'aria-label': t('app.mode') });
   const modeButtons = [];
@@ -330,6 +340,11 @@ export function planPlanner({ patient, treatment, cal }) {
       : 0;
     const free = Math.max(0, balance - pending);
     const unit = pen ? unitShort(pen) : '';
+    if (!pen) {
+      capHint.textContent = t('plan.noPenCap');
+      if (!state.countTouched && !(Number(countInput.value) > 0)) countInput.value = '4';
+      return;
+    }
     if (max > 0) {
       capHint.textContent = t('plan.capHint', { saldo: `${formatNumber(free)} ${unit}`, n: max });
     } else if (pending > 0) {
@@ -579,7 +594,8 @@ export function planPlanner({ patient, treatment, cal }) {
 /* ------------------------------------------------------------------ */
 export function planCoverageList({ patient, treatment }) {
   const rows = planCoverage(treatment).filter((r) => r.entries.length || r.pen.status === 'active');
-  if (!rows.length) return null;
+  const noPen = pendingPlans(treatment).filter((p) => !p.penId);
+  if (!rows.length && !noPen.length) return null;
 
   const drug = treatmentDrug(treatment);
 
@@ -630,7 +646,20 @@ export function planCoverageList({ patient, treatment }) {
                     }))
                 : null)
         );
-      })));
+      }),
+      // Propostes prescrites en mg sense ploma assignada (issue #2)
+      noPen.length
+        ? h('li', { class: 'coverage__row coverage__row--nopen' },
+          h('span', { class: 'coverage__swatch coverage__swatch--none' }),
+          h('div', { class: 'coverage__body' },
+            h('p', { class: 'coverage__title' },
+              h('strong', {}, '—'), ' ', t('plan.noPenShort'),
+              h('span', { class: 'muted' }, ` · ${t('plan.coverageNoPen', { n: noPen.length })}`)),
+            h('p', { class: 'coverage__line' },
+              h('span', { class: 'pill pill--projected' }, t('plan.noPenShort')),
+              t('plan.noPenCap'))))
+        : null
+    ));
 }
 
 /* ------------------------------------------------------------------ */

@@ -29,6 +29,7 @@ import {
   buildAlerts,
 } from '../js/core/calc.js';
 import { createPatient, createTreatment, createPen, createPlanEntry, createAdministration } from '../js/core/model.js';
+import { getDrug, clicksAvailable } from '../js/core/drugs.js';
 import { migrate, CURRENT_VERSION } from '../js/data/migrations.js';
 import { validateBackup, SCHEMA_VERSION } from '../js/core/validate.js';
 import { createRepository, memoryAdapter } from '../js/data/repository.js';
@@ -619,4 +620,88 @@ test('resequencePlanDates: no treu cap proposta del tram de la fase', () => {
   assert.equal(res.moved, 1, 'la primera passa a 01/12 (dins del tram)');
   assert.equal(res.conflicts, 1, 'la segona voldria 15/12, fora de la fase');
   assert.equal(treatment.plans[1].date, '2026-12-13', 'es conserva la data');
+});
+
+/* ---------- issue #2: el pla es desacobla de la ploma ---------- */
+
+test('generatePlan sense ploma: pla prescrit en mg, sense saldo ni clics', () => {
+  const { treatment } = base();
+  const res = generatePlan(treatment, {
+    penId: null, mode: 'standard', value: 5, startDate: '2026-12-01', intervalDays: 7, count: 4,
+  });
+  assert.equal(res.ok, true, 'es pot generar sense ploma');
+  assert.equal(res.unit, 'mg');
+  assert.equal(res.amount, 5, 'la quantitat és la dosi en mg');
+  assert.equal(res.mg, 5);
+  assert.equal(res.maxDoses, null, 'sense ploma no hi ha límit de saldo');
+  assert.equal(res.balance, null);
+  assert.equal(res.shortfallAt, null);
+  assert.deepEqual(res.dates, ['2026-12-01', '2026-12-08', '2026-12-15', '2026-12-22']);
+
+  // els clics necessiten ploma: no es pot generar un pla en clics sense ella
+  const clicks = generatePlan(treatment, {
+    penId: null, mode: 'clicks', value: 30, startDate: '2026-12-01', intervalDays: 7, count: 2,
+  });
+  assert.equal(clicks.ok, false);
+  assert.equal(clicks.reason, 'needs-pen');
+  assert.equal(clicksAvailable(null, getDrug('mounjaro')), false, 'sense ploma no hi ha mode clics');
+});
+
+test('generatePlan salta les dates ocupades: una dosi prevista per esdeveniment', () => {
+  const { treatment, pen } = base(); // administracions reals el 01/11 i 08/11
+  const other = createPen({ presentationMg: 5, startDate: '2026-11-01', initialCapacity: 240, capacityUnit: 'clicks' });
+  treatment.pens.push(other);
+  // proposta d'UNA ALTRA ploma el 29/11: no es pot duplicar l'esdeveniment
+  treatment.plans = [createPlanEntry({
+    date: '2026-11-29', penId: other.id, mode: 'clicks', value: 15, amount: 15, unit: 'clicks', mg: 2.5,
+  })];
+
+  const opts = { penId: pen.id, mode: 'standard', value: 2.5, startDate: '2026-11-01', intervalDays: 7, count: 4 };
+  const res = generatePlan(treatment, opts);
+  assert.equal(res.ok, true);
+  assert.deepEqual(res.dates, ['2026-11-15', '2026-11-22', '2026-12-06', '2026-12-13'],
+    'salta 01/11 i 08/11 (registres reals) i 29/11 (altra ploma)');
+
+  // la proposta de la MATEIXA ploma sí que es substitueix: no ocupa
+  treatment.plans.push(createPlanEntry({
+    date: '2026-11-15', penId: pen.id, mode: 'clicks', value: 15, amount: 15, unit: 'clicks', mg: 2.5,
+  }));
+  const res2 = generatePlan(treatment, opts);
+  assert.ok(res2.dates.includes('2026-11-15'), 'la proposta de la mateixa ploma no bloqueja');
+});
+
+test('un pla pot no tenir ploma (penId null) i exigir que, si hi és, existeixi', () => {
+  const { patient, treatment } = base();
+  treatment.plans = [createPlanEntry({
+    date: '2026-12-01', penId: null, mode: 'standard', value: 5, amount: 5, unit: 'mg', mg: 5,
+  })];
+  const repo = createRepository(memoryAdapter());
+  repo.save(patient);
+  const ok = validateBackup(repo.exportAll());
+  assert.equal(ok.ok, true, 'penId null és un pla vàlid: ' + (ok.errors || []).join(' | '));
+
+  treatment.plans[0].penId = 'pen-fantasma';
+  const repo2 = createRepository(memoryAdapter());
+  repo2.save(patient);
+  const bad = validateBackup(repo2.exportAll());
+  assert.equal(bad.ok, false, 'una ploma inexistent continua sent error');
+  assert.ok(bad.errors.some((e) => e.includes('pen-fantasma')));
+});
+
+test('linkPlanToAdmin assigna la ploma a un pla prescrit sense ploma', () => {
+  const { treatment, pen } = base();
+  treatment.plans = [createPlanEntry({
+    date: '2026-11-15', penId: null, mode: 'standard', value: 5, amount: 5, unit: 'mg', mg: 5,
+  })];
+  const adm = createAdministration({
+    date: '2026-11-15', penId: pen.id, mode: 'clicks', value: 30, amount: 30, unit: 'clicks', mg: 5,
+  });
+  treatment.administrations.push(adm);
+
+  const linked = linkPlanToAdmin(treatment, adm);
+  assert.ok(linked, 's\'enllaça encara que la proposta no tingui ploma');
+  assert.equal(linked.penId, pen.id, 'la ploma s\'assigna en registrar (assignació posterior)');
+  assert.equal(linked.registeredAdminId, adm.id);
+  assert.equal(linked.amount, 5, 'la dosi prescrita es conserva');
+  assert.equal(linked.mg, 5);
 });

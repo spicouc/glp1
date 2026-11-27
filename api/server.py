@@ -413,9 +413,11 @@ def recompute_balances(treatment):
 def link_plans(treatment):
     """Port de `linkPlanToAdmin` / `unlinkPlanFromAdmin` (JS).
 
-    La comparació no inclou la dosi: registrar una dosi diferent de la prevista
-    ha de tancar la proposta d'aquesta data igualment (la proposta conserva la
-    prescrita i l'administració, la real).
+    - La comparació no inclou la dosi: registrar una dosi diferent de la
+      prevista ha de tancar la proposta d'aquesta data igualment (la proposta
+      conserva la prescrita i l'administració, la real).
+    - Un pla prescrit en mg sense ploma (`penId` null) també enllaça i rep la
+      ploma amb què es va registrar (assignació posterior, issue #2).
     """
     admins = treatment.get("administrations") or []
     plans = treatment.get("plans") or []
@@ -427,8 +429,10 @@ def link_plans(treatment):
             if (
                 pl.get("registeredAdminId") is None
                 and pl.get("date") == a.get("date")
-                and pl.get("penId") == a.get("penId")
+                and (pl.get("penId") == a.get("penId") or pl.get("penId") is None)
             ):
+                if pl.get("penId") is None:
+                    pl["penId"] = a.get("penId")
                 pl["registeredAdminId"] = a.get("id")
                 pl["status"] = "administered"
                 changed += 1

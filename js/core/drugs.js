@@ -325,6 +325,7 @@ export function clickModeState(pen, drug) {
 
 /** Si el mode clics es pot fer servir en aquesta ploma (inclou el manual). */
 export function clicksAvailable(pen, drug) {
+  if (!pen) return false; // sense ploma no hi ha clics (issue #2)
   const state = clickModeState(pen, drug);
   return state === 'enabled' || state === 'enabled-manual';
 }

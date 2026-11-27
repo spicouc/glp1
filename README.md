@@ -75,9 +75,10 @@ capa `js/data/repository.js` ja està aïllada específicament per a això.
 
 ```bash
 npm run test:api       # tests de l'API (Python): auth, merge, rols, tokens, catàleg, tombes,
-                       #   duplicats, saldos, auditoria, purga, enllaç amb discrepància (28)
+                       #   duplicats, saldos, auditoria, purga, enllaç amb discrepància,
+                       #   pla sense ploma (29)
 npm test               # tests unitaris: model, càlcul, pla, plomes, sync, catàleg,
-                       #   migració v3, estats, fases, inventari (107)
+                       #   migració v3, estats, fases, inventari, pla sense ploma (111)
 npm run e2e            # proves de navegador: arrenca la PILA AÏLLADA (:8098)
                        #   smoke.mjs   flux complet per la UI
                        #   pens.mjs    plomes: capacitat en clics, esborrar/restaurar,
@@ -316,7 +317,8 @@ compartida de l'equip, no per-metge).
         "status": "active" }       // active | done | cancelled
     ],
     "plans": [
-      { "id": "pln_…", "date": "2026-11-20", "penId": "pen_…", "mode": "clicks", "value": 15,
+      { "id": "pln_…", "date": "2026-11-20", "penId": "pen_… | null",  // null: pla prescrit sense ploma
+        "mode": "clicks", "value": 15,
         "amount": 15, "unit": "clicks", "mg": 2.5, "registeredAdminId": null, "notes": "",
         "status": "planned",       // planned | administered | postponed | omitted | cancelled
         "movedTo": null, "reason": "", "idempotencyKey": "…", "deletedAt": null }
@@ -651,9 +653,23 @@ El calendari té dues eines separades (selector a dalt):
    (esdevé administració real i l'entrada queda com a **feta**, visible a
    l'historial), `Edita la dosi prevista` (mou data, canvia ploma o dosi) i
    `Treu-la del pla`.
-9. En registrar una data real que té pla amb la mateixa ploma **i la mateixa
-   dosi**, l'entrada queda **enllaçada automàticament**; si esborres
-   l'administració, la data torna a quedar pendent.
+9. En registrar una data real que tingui proposta (amb la mateixa ploma, o
+   una **prescrita sense ploma**), l'entrada queda **enllaçada
+   automàticament** — encara que la dosi no coincideixi: la proposta conserva
+   la prescrita i l'administració, la real —; si la proposta no tenia ploma,
+   **rep la amb què es va registrar**. Si esborres l'administració, la data
+   torna a quedar pendent.
+10. **Pla sense ploma (desacoblament #2)**: al selector de ploma hi ha
+   l'opció **`Sense ploma (mg)`** → es dissenya la pauta **en mg** sense
+   dependre de cap ploma. La cobertura hi afegeix una fila *«N propostes en mg
+   sense ploma assignada»*, les cel·les es veuen en mg i **sense marca de ploma**
+   i el planificador explica que «el pla prescrit en mg no depèn de cap ploma».
+   La ploma **s'assigna després** (en registrar o editant la proposta);
+   canviar-ne una **no altera la pauta** (només es recalcula la quantitat amb
+   la presentació nova); la manca d'inventari només és un **avís**, i el
+   **registre real continua exigint ploma compatible**. En generar, les dates
+   ja ocupades (registre real o proposta d'una altra ploma) **es salten**: una
+   dosi prevista per esdeveniment.
 
 #### Eina de calendari: Pinta / Esborra / Consulta
 

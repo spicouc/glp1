@@ -373,6 +373,59 @@ try {
   log('✓ després de recarregar: la fitxa carrega i conserva les dades');
   if (fitxaOk !== 1) problems.push('La fitxa no s\'ha carregat després de recarregar');
   if (!/Saldo actual: 240 clics/.test(resumOk)) problems.push('Les dades no han sobreviscut a la recàrrega: ' + resumOk.slice(0, 150));
+  // --- pla sense ploma (issue #2): es dissenya en mg i la ploma ve després --
+  // després de recarregar, el calendari torna en mode Registre → cal entrar
+  // al mode Pla per veure el planificador
+  await page.locator('.segmented--calendar').getByRole('button', { name: 'Pla', exact: true }).click();
+  const plannerNoPen = page.locator('.card', { hasText: 'Planificació per plomes' });
+  await plannerNoPen.waitFor({ timeout: 8000 });
+  await plannerNoPen.locator('select').first().selectOption({ label: 'Sense ploma (mg)' });
+  await page.waitForTimeout(250);
+  const capNoPen = (await plannerNoPen.locator('.plan__cap').innerText().catch(() => '')).replace(/\n/g, ' ');
+  if (!/prescrit en mg/.test(capNoPen)) {
+    problems.push('Sense ploma no s\'explica el pla en mg: ' + capNoPen.slice(0, 160));
+  } else log('✓ sense ploma → pista «pla prescrit en mg»:', capNoPen.slice(0, 90));
+
+  await plannerNoPen.locator('input[type="date"]').fill('2027-02-01');
+  await plannerNoPen.locator('input[aria-label="Nombre de dosis"]').fill('3');
+  await plannerNoPen.getByRole('button', { name: /Genera el pla|Torna a generar/ }).click();
+  await page.waitForSelector('.dialog', { timeout: 5000 });
+  const prevNoPen = (await page.locator('.dialog').innerText()).replace(/\n/g, ' ');
+  if (!/01\/02\/2027/.test(prevNoPen)) {
+    problems.push('La previsualització del pla sense ploma no llista les dates: ' + prevNoPen.slice(0, 200));
+  }
+  const genNoPen = page.locator('.dialog').getByRole('button', { name: 'Genera el pla', exact: true });
+  if (await genNoPen.count()) await genNoPen.click();
+  else problems.push('No es confirma la generació del pla sense ploma');
+  await page.waitForSelector('.dialog', { state: 'detached', timeout: 5000 }).catch(() => {});
+  await page.waitForTimeout(400);
+
+  const covNoPen = (await page.locator('.coverage').innerText()).replace(/\n/g, ' ');
+  if (!/3 propostes en mg sense ploma/.test(covNoPen)) {
+    problems.push('La cobertura no mostra les propostes sense ploma: ' + covNoPen.slice(0, 260));
+  } else log('✓ cobertura: fila de propostes en mg sense ploma');
+  if (!/#\d|Activa/.test(covNoPen)) {
+    problems.push('La cobertura ha perdut les files de ploma: ' + covNoPen.slice(0, 260));
+  } else log('✓ la cobertura manté les files de ploma i hi afegeix les prescrites en mg');
+
+  // la cel·la es veu en mg i sense marca de ploma
+  let cellNoPen = '';
+  for (let i = 0; i < 5 && !cellNoPen; i += 1) {
+    cellNoPen = await page.locator('.day[aria-label^="1 de febrer de 2027"]').getAttribute('aria-label').catch(() => '');
+    if (!cellNoPen) {
+      await page.getByRole('button', { name: 'Mes següent' }).click();
+      await page.waitForTimeout(250);
+    }
+  }
+  if (!cellNoPen) {
+    problems.push('No es troba la cel·la del 01/02/2027 amb el pla sense ploma');
+  } else {
+    if (!/sense ploma/.test(cellNoPen)) problems.push('La cel·la no diu que no té ploma: ' + cellNoPen);
+    if (!/5 mg/.test(cellNoPen)) problems.push('La cel·la no mostra la dosi en mg: ' + cellNoPen);
+    if (/#\d/.test(cellNoPen)) problems.push('La cel·la no hauria de marcar cap ploma: ' + cellNoPen);
+    else log('✓ cel·la prescrita en mg:', cellNoPen);
+  }
+
   // --- esborrar el tractament --------------------------------------------
   await page.locator('.tab', { hasText: 'Tractament' }).click();
   await page.waitForSelector('.view--treatment');

@@ -108,8 +108,10 @@ export function validatePatient(p, path = 'pacient') {
       if (!isObj(p)) return errors.push(`${pp}: ha de ser un objecte`);
       if (!p.id) errors.push(`${pp}.id: obligatori`);
       if (!isValidISO(p.date)) errors.push(`${pp}.date: data no vàlida (${p.date})`);
-      if (!p.penId) errors.push(`${pp}.penId: obligatori`);
-      else if (!penIds.has(p.penId)) errors.push(`${pp}.penId: la ploma ${p.penId} no existeix en aquest tractament`);
+      // `penId` pot ser null: pla prescrit en mg sense ploma assignada
+      // (l'assignació ve després, en registrar o editant). Si hi és, ha
+      // d'existir al tractament.
+      if (p.penId && !penIds.has(p.penId)) errors.push(`${pp}.penId: la ploma ${p.penId} no existeix en aquest tractament`);
       if (!['standard', 'clicks'].includes(p.mode)) errors.push(`${pp}.mode: mode desconegut`);
       if (!(Number(p.amount) >= 0)) errors.push(`${pp}.amount: ha de ser ≥ 0`);
       if (p.registeredAdminId && !(t.administrations || []).some((a) => a.id === p.registeredAdminId)) {

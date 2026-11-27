@@ -828,28 +828,59 @@ export function maxDosesFor(treatment, pen, { mode, value }) {
  *
  * @returns {ok, reason, amount, unit, mg, dates, maxDoses, shortfallAt}
  */
-export function generatePlan(treatment, { penId, mode = 'standard', value, startDate, intervalDays = 7, count }) {
-  const pen = penById(treatment, penId);
-  if (!pen) return { ok: false, reason: 'no-pen', dates: [] };
+export function generatePlan(treatment, { penId = null, mode = 'standard', value, startDate, intervalDays = 7, count }) {
+  // Pla prescrit sense ploma (issue #2): es dissenya en mg i la ploma
+  // s'assigna després (en registrar o editant la proposta). Per a això cal
+  // poder generar sense ploma i, en aquest cas, només en mode estàndard.
+  const pen = penId ? penById(treatment, penId) : null;
+  if (penId && !pen) return { ok: false, reason: 'no-pen', dates: [] };
+  if (!pen && mode !== 'standard') return { ok: false, reason: 'needs-pen', dates: [], amount: 0 };
 
   const drug = treatmentDrug(treatment);
-  const { amount, unit, mg, valid } = registerAmount({ mode, value, pen, drug });
+  let amount;
+  let unit;
+  let mg;
+  let valid;
+  if (pen) {
+    ({ amount, unit, mg, valid } = registerAmount({ mode, value, pen, drug }));
+  } else {
+    const n = Number(value);
+    valid = Number.isFinite(n) && n > 0;
+    amount = valid ? n : 0; // la quantitat és la dosi en mg
+    unit = 'mg';
+    mg = valid ? n : null;
+  }
   if (!valid || !amount) return { ok: false, reason: 'invalid-value', dates: [], amount: 0 };
   if (!isValidPlanDate(startDate)) return { ok: false, reason: 'invalid-date', dates: [], amount };
 
   const interval = Math.max(1, Math.round(Number(intervalDays) || 7));
-  const maxDoses = maxDosesFor(treatment, pen, { mode, value });
+  // Sense ploma no hi ha saldo ni cobertura per ploma: la compatibilitat es
+  // comprova quan s'assigna (i, si no hi ha prou, només és un avís).
+  const maxDoses = pen ? maxDosesFor(treatment, pen, { mode, value }) : null;
   const wanted = Math.min(Math.max(1, Math.round(Number(count) || 0)), 104);
-  const balance = penBalance(treatment, pen);
-  const pending = plansForPen(treatment, pen.id).reduce((s, p) => s + Number(p.amount || 0), 0);
+  const balance = pen ? penBalance(treatment, pen) : null;
+  const pending = pen ? plansForPen(treatment, pen.id).reduce((s, p) => s + Number(p.amount || 0), 0) : 0;
 
   const dates = [];
   let used = pending;
   let shortfallAt = null;
-  for (let i = 0; i < wanted; i += 1) {
+  // Un sol esdeveniment: no es crea cap proposta en una data que ja en tingui
+  // (registre real o proposta d'UNA ALTRA ploma). Les de la pròpia ploma es
+  // substitueixen en confirmar, així que no compten com a ocupades.
+  const occupied = (iso) =>
+    allAdministrations(treatment).some((a) => a.date === iso) ||
+    allPlans(treatment).some((p) => p.date === iso && p.penId !== penId);
+  let i = 0;
+  let guard = 0;
+  while (dates.length < wanted && guard < wanted * 8) {
+    guard += 1;
     const date = addDays(startDate, i * interval);
-    used += amount;
-    if (balance - used < 0 && shortfallAt === null) shortfallAt = date;
+    i += 1;
+    if (occupied(date)) continue;
+    if (pen) {
+      used += amount;
+      if (balance - used < 0 && shortfallAt === null) shortfallAt = date;
+    }
     dates.push(date);
   }
 
@@ -874,12 +905,18 @@ function isValidPlanDate(iso) {
  */
 export function linkPlanToAdmin(treatment, admin) {
   if (!treatment || !admin) return null;
+  // Coincideix per ploma o per qualsevol proposta que encara no en tingui:
+  // un pla prescrit en mg rep la ploma AQUÍ (assignació posterior), i el que
+  // no canvia mai és la pauta.
   const open = (treatment.plans || []).find(
     (p) => !p.registeredAdminId &&
       p.date === admin.date &&
-      p.penId === admin.penId
+      (p.penId === admin.penId || p.penId == null)
   );
-  if (open) open.registeredAdminId = admin.id;
+  if (open) {
+    if (open.penId == null) open.penId = admin.penId;
+    open.registeredAdminId = admin.id;
+  }
   return open || null;
 }
 

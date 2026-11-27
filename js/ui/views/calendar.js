@@ -273,9 +273,13 @@ function dayCell({ iso, ctx }) {
   } else if (plans.length) {
     const first = plans[0];
     const status = first.status || 'planned';
-    body.appendChild(h('span', { class: 'day__amount day__amount--plan' }, formatNumber(first.amount)));
-    body.appendChild(h('span', { class: 'day__penmark' }, `#${penNumber(ctx.pens, first.penId)}`));
-    if (first.mg != null) body.appendChild(h('span', { class: 'day__mg' }, `≈${formatNumber(first.mg)} mg`));
+    const noPen = !first.penId; // pla prescrit en mg, sense ploma assignada
+    body.appendChild(h('span', { class: 'day__amount day__amount--plan' },
+      noPen ? `${formatNumber(first.amount)} mg` : formatNumber(first.amount)));
+    if (!noPen) {
+      body.appendChild(h('span', { class: 'day__penmark' }, `#${penNumber(ctx.pens, first.penId)}`));
+      if (first.mg != null) body.appendChild(h('span', { class: 'day__mg' }, `≈${formatNumber(first.mg)} mg`));
+    }
     if (plans.length > 1) body.appendChild(h('span', { class: 'day__more' }, `+${plans.length - 1}`));
     // Estat que no és "prevista": es veu a la casella (ajornada/omesa/cancel·lada)
     if (status !== 'planned') {
@@ -297,7 +301,8 @@ function dayCell({ iso, ctx }) {
   if (admins.length) aria.push(amountLabel(admins[0].amount, admins[0].unit));
   else if (plans.length) {
     const st = plans[0].status || 'planned';
-    aria.push(`${t('plan.entry')}: ${amountLabel(plans[0].amount, plans[0].unit)} · #${penNumber(ctx.pens, plans[0].penId)}`
+    aria.push(`${t('plan.entry')}: ${amountLabel(plans[0].amount, plans[0].unit)}`
+      + (plans[0].penId ? ` · #${penNumber(ctx.pens, plans[0].penId)}` : ` · ${t('plan.noPenShort')}`)
       + (st !== 'planned' ? ` · ${t(`plan.status.${st}`)}` : ''));
   }
 
@@ -332,13 +337,9 @@ export function renderCalendar(patient) {
     });
   }
 
-  if (!pen) {
-    return emptyState(
-      t('pen.empty'),
-      t('pen.emptyHint'),
-      btn(t('cal.quickNoPenCta'), { variant: 'primary', icon: 'plus', onClick: () => navigate(patientPath(patient.id, 'pens')) })
-    );
-  }
+  // Sense ploma activa el calendari es continua consultant i planificant (la
+  // barra de registre ràpid es deshabilita sola i demana ploma): només el
+  // registre real en depèn (issue #2).
 
   if (!isValidISO(cal.month)) cal.month = today;
   if (cal.mode !== 'plan') cal.mode = 'register';
@@ -392,7 +393,8 @@ export function renderCalendar(patient) {
 
   const planValid = () => {
     const p = ensurePlanner(treatment, cal);
-    return Boolean(p.penId) && Number(p.value) > 0 && isValidISO(p.startDate);
+    if (!(Number(p.value) > 0) || !isValidISO(p.startDate)) return false;
+    return p.mode === 'clicks' ? Boolean(p.penId) : true; // sense ploma, en mg
   };
 
   const onDay = async (iso) => {

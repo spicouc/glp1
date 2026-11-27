@@ -156,7 +156,9 @@ export function openDaySheet({ patient, treatment, date, projection = null, quic
           chip(statusLabel, { tone }),
           h('strong', { class: 'detail__amount detail__amount--plan' }, amountLabel(entry.amount, entry.unit)),
           h('span', { class: 'detail__pen' },
-            `#${n} · ${pen && pen.presentationMg ? `${formatNumber(pen.presentationMg)} mg` : '—'}`)),
+            pen
+              ? `#${n} · ${pen.presentationMg ? `${formatNumber(pen.presentationMg)} mg` : '—'}`
+              : t('plan.noPenLong'))),
         entry.mg != null
           ? h('p', { class: 'detail__equiv' },
               h('span', { class: 'pill pill--derived' }, t('k.derived')),

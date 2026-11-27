@@ -33,6 +33,8 @@ export function doseLabel(dose) {
 
 export function amountLabel(amount, unit) {
   if (amount === null || amount === undefined) return '—';
+  // Pla prescrit sense ploma: la quantitat és en mg
+  if (unit === 'mg') return `${formatNumber(amount)} mg`;
   return unit === 'doses'
     ? `${formatNumber(amount)} ${Number(amount) === 1 ? 'dosi' : 'doses'}`
     : `${formatNumber(amount)} ${t('admin.clicks')}`;
